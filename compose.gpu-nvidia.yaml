@@ -1,0 +1,5 @@
+services:
+  ollama:
+    labels:
+      local-ai-api.accelerator: nvidia
+    gpus: all

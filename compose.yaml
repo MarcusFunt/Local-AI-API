@@ -1,0 +1,76 @@
+name: local-ai-api
+
+x-gateway-environment: &gateway-environment
+  OLLAMA_BASE_URL: http://127.0.0.1:11434
+  HOST: 127.0.0.1
+  PORT: "8080"
+  DEFAULT_MODEL_PROFILE: ${DEFAULT_MODEL_PROFILE:-main}
+  ENABLE_ARBITRARY_MODELS: ${ENABLE_ARBITRARY_MODELS:-false}
+  ENABLE_API_KEY_AUTH: ${ENABLE_API_KEY_AUTH:-false}
+  API_KEY: ${API_KEY:-}
+  REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-600}
+  MAX_REQUEST_BODY_BYTES: ${MAX_REQUEST_BODY_BYTES:-10485760}
+
+services:
+  ollama:
+    image: ollama/ollama:${OLLAMA_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: 127.0.0.1:11434
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-5m}
+    volumes:
+      - ollama-data:/root/.ollama
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  model-init:
+    image: ollama/ollama:${OLLAMA_IMAGE_TAG:-latest}
+    restart: "no"
+    network_mode: service:ollama
+    environment:
+      OLLAMA_HOST: 127.0.0.1:11434
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        ollama pull qwen3.5:9b
+        ollama pull qwen3.5:4b
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  gateway:
+    image: local-ai-api-gateway:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    network_mode: service:ollama
+    environment: *gateway-environment
+    depends_on:
+      ollama:
+        condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5).read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  ollama-data:

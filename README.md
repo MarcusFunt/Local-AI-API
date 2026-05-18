@@ -42,11 +42,53 @@ Tailscale Serve acts as the TLS terminator and access-control layer. The gateway
 
 ---
 
+## Automated Docker deployment on Linux Mint
+
+For a Linux Mint host, the recommended production path is the self-updating Docker installer:
+
+```bash
+git clone https://github.com/MarcusFunt/Local-AI-API.git
+cd Local-AI-API
+./scripts/install-or-update.sh
+```
+
+The script:
+
+- fetches `origin/main`, hard-resets tracked files to GitHub, and cleans untracked files while preserving runtime env files such as `.env`
+- installs Docker Engine and the Compose plugin if needed
+- runs Ollama in Docker with the gateway sharing Ollama's network namespace
+- keeps raw Ollama private on `127.0.0.1:11434` inside Docker and publishes only `127.0.0.1:8080`
+- auto-selects NVIDIA, AMD/ROCm, or CPU compose overrides
+- builds the gateway image and runs `python -m pytest tests -v` inside it before restarting the live gateway
+- pulls `qwen3.5:9b` and `qwen3.5:4b`
+- installs Tailscale if needed, runs `tailscale up` interactively when unauthenticated, and configures `tailscale serve --bg http://127.0.0.1:8080`
+- installs a systemd timer that runs on boot and daily using the same script
+
+Important: the script intentionally forces the deployment checkout to match `origin/main`. Commit and push any tracked local work before running it on a machine where you care about those changes.
+
+Useful verification commands after install:
+
+```bash
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/health/ollama
+docker ps --format 'table {{.Names}}\t{{.Ports}}'
+systemctl list-timers local-ai-api-update.timer
+tailscale serve status
+```
+
+To run a manual update later:
+
+```bash
+./scripts/install-or-update.sh
+```
+
+---
+
 ## Installation
 
 ```bash
-git clone https://github.com/your-username/local-ai-api.git
-cd local-ai-api
+git clone https://github.com/MarcusFunt/Local-AI-API.git
+cd Local-AI-API
 
 pip install -r requirements.txt
 
@@ -240,6 +282,13 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `API_KEY` | *(empty)* | The required non-empty token when `ENABLE_API_KEY_AUTH=true`. |
 | `REQUEST_TIMEOUT_SECONDS` | `600` | Max seconds to wait for Ollama. Large models can be slow on first load. |
 | `MAX_REQUEST_BODY_BYTES` | `10485760` | Max allowed request body (10 MiB). |
+
+Docker-only variables used by `compose.yaml`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `OLLAMA_IMAGE_TAG` | `latest` | Ollama Docker image tag. |
+| `OLLAMA_KEEP_ALIVE` | `5m` | How long Ollama keeps models loaded after use. |
 
 ### Supported model values
 

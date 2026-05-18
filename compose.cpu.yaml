@@ -1,0 +1,4 @@
+services:
+  ollama:
+    labels:
+      local-ai-api.accelerator: cpu

@@ -1,0 +1,11 @@
+services:
+  ollama:
+    labels:
+      local-ai-api.accelerator: amd
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+    security_opt:
+      - seccomp=unconfined
