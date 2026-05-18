@@ -68,6 +68,11 @@ def _build_ollama_body(
         options["top_p"] = request_dict["top_p"]
     if request_dict.get("max_tokens") is not None:
         options["num_predict"] = request_dict["max_tokens"]
+    if request_dict.get("stop") is not None:
+        stop = request_dict["stop"]
+        options["stop"] = [stop] if isinstance(stop, str) else stop
+    if request_dict.get("seed") is not None:
+        options["seed"] = request_dict["seed"]
     if options:
         body["options"] = options
 
@@ -92,6 +97,51 @@ def _raise_for_ollama_error(response: httpx.Response) -> None:
         )
 
 
+async def _raise_for_ollama_stream_error(response: httpx.Response) -> None:
+    if response.status_code >= 400:
+        await response.aread()
+        _raise_for_ollama_error(response)
+
+
+def _ollama_timeout_exception(message: str) -> HTTPException:
+    return HTTPException(
+        status_code=504,
+        detail={
+            "error": {
+                "message": message,
+                "type": "upstream_error",
+                "code": "ollama_timeout",
+            }
+        },
+    )
+
+
+def _ollama_connect_exception(message: str) -> HTTPException:
+    return HTTPException(
+        status_code=502,
+        detail={
+            "error": {
+                "message": message,
+                "type": "upstream_error",
+                "code": "ollama_error",
+            }
+        },
+    )
+
+
+def _ollama_invalid_response_exception(message: str) -> HTTPException:
+    return HTTPException(
+        status_code=502,
+        detail={
+            "error": {
+                "message": message,
+                "type": "upstream_error",
+                "code": "ollama_invalid_response",
+            }
+        },
+    )
+
+
 def _make_completion_id() -> str:
     return "chatcmpl-" + uuid.uuid4().hex
 
@@ -110,32 +160,18 @@ async def proxy_non_streaming(
         response = await client.post("/api/chat", json=body)
     except httpx.TimeoutException as exc:
         logger.warning("Ollama request timed out: %s", exc)
-        raise HTTPException(
-            status_code=504,
-            detail={
-                "error": {
-                    "message": "Request to Ollama timed out.",
-                    "type": "upstream_error",
-                    "code": "ollama_timeout",
-                }
-            },
-        ) from exc
+        raise _ollama_timeout_exception("Request to Ollama timed out.") from exc
     except httpx.ConnectError as exc:
         logger.warning("Could not connect to Ollama: %s", exc)
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "error": {
-                    "message": "Could not connect to Ollama.",
-                    "type": "upstream_error",
-                    "code": "ollama_error",
-                }
-            },
-        ) from exc
+        raise _ollama_connect_exception("Could not connect to Ollama.") from exc
 
     _raise_for_ollama_error(response)
 
-    data = response.json()
+    try:
+        data = response.json()
+    except ValueError as exc:
+        logger.warning("Ollama returned invalid JSON: %s", exc)
+        raise _ollama_invalid_response_exception("Ollama returned invalid JSON.") from exc
     msg = data.get("message", {})
     prompt_tokens = data.get("prompt_eval_count", 0) or 0
     completion_tokens = data.get("eval_count", 0) or 0
@@ -167,7 +203,7 @@ async def proxy_streaming(
     request_dict: dict[str, Any],
     settings: Settings,
 ) -> AsyncGenerator[str, None]:
-    """Yield SSE lines translating Ollama's NDJSON stream to OpenAI SSE format."""
+    """Open an Ollama stream and return an OpenAI-compatible SSE generator."""
     client = _get_client()
     body = _build_ollama_body(resolved_model, request_dict, stream=True)
 
@@ -189,15 +225,40 @@ async def proxy_streaming(
         )
         return f"data: {chunk.model_dump_json(exclude_none=True)}\n\n"
 
+    def _error_event(message: str, code: str) -> str:
+        payload = {
+            "error": {
+                "message": message,
+                "type": "upstream_error",
+                "code": code,
+            }
+        }
+        return f"event: error\ndata: {json.dumps(payload)}\n\n"
+
     logger.info("Sending streaming request to Ollama (model=%s)", resolved_model)
 
+    stream_context = None
     try:
-        async with client.stream("POST", "/api/chat", json=body) as response:
-            _raise_for_ollama_error(response)
+        stream_context = client.stream("POST", "/api/chat", json=body)
+        response = await stream_context.__aenter__()
+        await _raise_for_ollama_stream_error(response)
+    except httpx.TimeoutException as exc:
+        logger.warning("Ollama stream timed out: %s", exc)
+        raise _ollama_timeout_exception("Request to Ollama timed out.") from exc
+    except httpx.ConnectError as exc:
+        logger.warning("Could not connect to Ollama for stream: %s", exc)
+        raise _ollama_connect_exception("Could not connect to Ollama.") from exc
+    except Exception:
+        if stream_context is not None:
+            await stream_context.__aexit__(None, None, None)
+        raise
 
+    async def generate() -> AsyncGenerator[str, None]:
+        try:
             # First chunk carries the role
             yield _chunk({"role": "assistant"}, finish_reason=None)
 
+            completed = False
             async for raw_line in response.aiter_lines():
                 raw_line = raw_line.strip()
                 if not raw_line:
@@ -212,17 +273,24 @@ async def proxy_streaming(
                 done = ollama_chunk.get("done", False)
                 content = ollama_chunk.get("message", {}).get("content", "")
 
+                if completed:
+                    continue
                 if not done:
                     yield _chunk({"content": content}, finish_reason=None)
                 else:
                     yield _chunk({}, finish_reason="stop")
                     yield "data: [DONE]\n\n"
-                    return
+                    completed = True
 
-    except httpx.TimeoutException as exc:
-        logger.warning("Ollama stream timed out: %s", exc)
-        # Stream may have already started; emit [DONE] and bail
-        yield "data: [DONE]\n\n"
-    except httpx.ConnectError as exc:
-        logger.warning("Could not connect to Ollama for stream: %s", exc)
-        yield "data: [DONE]\n\n"
+            if not completed:
+                yield _error_event("Ollama stream ended before completion.", "ollama_invalid_response")
+        except httpx.TimeoutException as exc:
+            logger.warning("Ollama stream timed out after response started: %s", exc)
+            yield _error_event("Ollama stream timed out.", "ollama_timeout")
+        except httpx.ConnectError as exc:
+            logger.warning("Ollama stream connection failed after response started: %s", exc)
+            yield _error_event("Ollama stream connection failed.", "ollama_error")
+        finally:
+            await stream_context.__aexit__(None, None, None)
+
+    return generate()

@@ -30,7 +30,7 @@ The correct network layout is:
 
 Tailscale Serve acts as the TLS terminator and access-control layer. The gateway adds model-name gating and optional API-key auth on top. Ollama sees only local loopback traffic.
 
-**Never change `OLLAMA_BASE_URL` to `0.0.0.0` or a routable IP. Never open port 11434 in your firewall or router.**
+`OLLAMA_BASE_URL` is validated at startup and must point to a loopback host such as `127.0.0.1`, `localhost`, or `::1`. Never open port 11434 in your firewall or router.
 
 ---
 
@@ -231,13 +231,13 @@ Copy `.env.example` to `.env` and adjust as needed.
 
 | Variable | Default | Description |
 |---|---|---|
-| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama address. Do not change to a routable address. |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama address. Must point to a loopback host. |
 | `HOST` | `127.0.0.1` | Gateway listen address. Keep as localhost; Tailscale Serve forwards to it. |
 | `PORT` | `8080` | Gateway listen port. |
 | `DEFAULT_MODEL_PROFILE` | `main` | Profile used when the client omits the `model` field. |
 | `ENABLE_ARBITRARY_MODELS` | `false` | If `true`, any model name is forwarded to Ollama. |
 | `ENABLE_API_KEY_AUTH` | `false` | If `true`, requires a `Bearer` token on all non-health requests. |
-| `API_KEY` | *(empty)* | The required token when `ENABLE_API_KEY_AUTH=true`. |
+| `API_KEY` | *(empty)* | The required non-empty token when `ENABLE_API_KEY_AUTH=true`. |
 | `REQUEST_TIMEOUT_SECONDS` | `600` | Max seconds to wait for Ollama. Large models can be slow on first load. |
 | `MAX_REQUEST_BODY_BYTES` | `10485760` | Max allowed request body (10 MiB). |
 
@@ -317,4 +317,6 @@ All errors use an OpenAI-compatible envelope so clients that parse OpenAI errors
 | Missing or wrong API key | 401 |
 | Request body too large | 413 |
 | Ollama returned an error | 502 |
-| Ollama timed out or unreachable | 504 |
+| Ollama unreachable | 502 |
+| Ollama timed out | 504 |
+| Ollama returned malformed JSON | 502 |

@@ -7,12 +7,14 @@ import httpx
 from gateway.config import Settings
 from gateway.main import create_app
 
+OLLAMA_TEST_BASE = "http://127.0.0.1:11434"
+
 
 @pytest.fixture()
 def default_settings() -> Settings:
     """Settings with test-safe defaults (no auth, no arbitrary models)."""
     return Settings(
-        ollama_base_url="http://ollama-test.local",
+        ollama_base_url=OLLAMA_TEST_BASE,
         host="127.0.0.1",
         port=8080,
         default_model_profile="main",
@@ -28,7 +30,7 @@ def default_settings() -> Settings:
 def auth_settings() -> Settings:
     """Settings with API-key auth enabled."""
     return Settings(
-        ollama_base_url="http://ollama-test.local",
+        ollama_base_url=OLLAMA_TEST_BASE,
         host="127.0.0.1",
         port=8080,
         default_model_profile="main",
@@ -44,7 +46,7 @@ def auth_settings() -> Settings:
 def arbitrary_settings() -> Settings:
     """Settings with arbitrary model names enabled."""
     return Settings(
-        ollama_base_url="http://ollama-test.local",
+        ollama_base_url=OLLAMA_TEST_BASE,
         host="127.0.0.1",
         port=8080,
         default_model_profile="main",

@@ -1,16 +1,18 @@
 """FastAPI application entry point with middleware, lifespan, and route registration."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from hmac import compare_digest
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import Headers
 from starlette.responses import Response
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import client as ollama_client
 from .config import settings
@@ -31,46 +33,97 @@ _HEALTH_PATHS = {"/health", "/health/ollama"}
 # ---------------------------------------------------------------------------
 
 
-class BodySizeLimitMiddleware(BaseHTTPMiddleware):
+def request_too_large_response(actual_bytes: int, max_bytes: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=413,
+        content={
+            "error": {
+                "message": (
+                    f"Request body too large "
+                    f"({actual_bytes} bytes > {max_bytes} byte limit)."
+                ),
+                "type": "invalid_request_error",
+                "code": "request_too_large",
+            }
+        },
+    )
+
+
+class BodySizeLimitMiddleware:
     def __init__(self, app: ASGIApp, max_bytes: int) -> None:
-        super().__init__(app)
+        self.app = app
         self.max_bytes = max_bytes
 
-    async def dispatch(self, request: Request, call_next: object):  # type: ignore[override]
-        content_length = request.headers.get("content-length")
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = Headers(scope=scope)
+        content_length = headers.get("content-length")
         if content_length is not None:
             try:
                 length = int(content_length)
             except ValueError:
                 length = 0
             if length > self.max_bytes:
-                return JSONResponse(
-                    status_code=413,
-                    content={
-                        "error": {
-                            "message": (
-                                f"Request body too large "
-                                f"({length} bytes > {self.max_bytes} byte limit)."
-                            ),
-                            "type": "invalid_request_error",
-                            "code": "request_too_large",
-                        }
-                    },
-                )
-        return await call_next(request)
+                response = request_too_large_response(length, self.max_bytes)
+                await response(scope, receive, send)
+                return
+
+        body_parts: list[bytes] = []
+        bytes_seen = 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+
+            body = message.get("body", b"")
+            if body:
+                body_parts.append(body)
+                bytes_seen += len(body)
+                if bytes_seen > self.max_bytes:
+                    response = request_too_large_response(bytes_seen, self.max_bytes)
+                    await response(scope, receive, send)
+                    return
+
+            if not message.get("more_body", False):
+                break
+
+        body = b"".join(body_parts)
+        body_sent = False
+
+        async def replay_receive() -> Message:
+            nonlocal body_sent
+            if body_sent:
+                await asyncio.Event().wait()
+            body_sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        await self.app(scope, replay_receive, send)
 
 
-class AuthMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next: object):  # type: ignore[override]
+class AuthMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         if not settings.enable_api_key_auth:
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        if request.url.path in _HEALTH_PATHS:
-            return await call_next(request)
+        if scope.get("path") in _HEALTH_PATHS:
+            await self.app(scope, receive, send)
+            return
 
-        auth_header = request.headers.get("authorization", "")
+        headers = Headers(scope=scope)
+        auth_header = headers.get("authorization", "")
         if not auth_header.startswith("Bearer "):
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=401,
                 content={
                     "error": {
@@ -80,10 +133,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     }
                 },
             )
+            await response(scope, receive, send)
+            return
 
         token = auth_header[len("Bearer "):]
-        if token != settings.api_key:
-            return JSONResponse(
+        if not compare_digest(token, settings.api_key):
+            response = JSONResponse(
                 status_code=401,
                 content={
                     "error": {
@@ -93,8 +148,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     }
                 },
             )
+            await response(scope, receive, send)
+            return
 
-        return await call_next(request)
+        await self.app(scope, receive, send)
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +210,7 @@ def create_app() -> FastAPI:
             status_code=422,
             content={
                 "error": {
-                    "message": f"Request validation error: {exc.errors()}",
+                    "message": "Request validation error.",
                     "type": "invalid_request_error",
                     "code": "invalid_request",
                 }

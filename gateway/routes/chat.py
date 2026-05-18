@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .. import client as ollama_client
@@ -15,10 +15,7 @@ router = APIRouter()
 
 
 @router.post("/v1/chat/completions")
-async def chat_completions(request: Request) -> Any:
-    body = await request.json()
-    req = ChatCompletionRequest.model_validate(body)
-
+async def chat_completions(req: ChatCompletionRequest) -> Any:
     model_alias = req.model if req.model else settings.default_model_profile
     resolved = resolve_model(model_alias, settings)
 
@@ -35,11 +32,14 @@ async def chat_completions(request: Request) -> Any:
         "temperature": req.temperature,
         "top_p": req.top_p,
         "max_tokens": req.max_tokens,
+        "stop": req.stop,
+        "seed": req.seed,
     }
 
     if req.stream:
+        stream = await ollama_client.proxy_streaming(resolved, request_dict, settings)
         return StreamingResponse(
-            ollama_client.proxy_streaming(resolved, request_dict, settings),
+            stream,
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

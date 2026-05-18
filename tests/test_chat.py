@@ -7,9 +7,12 @@ import httpx
 import pytest
 import respx
 
+from gateway.config import Settings
+from gateway.main import create_app
+
 pytestmark = pytest.mark.asyncio
 
-OLLAMA_BASE = "http://ollama-test.local"
+OLLAMA_BASE = "http://127.0.0.1:11434"
 
 OLLAMA_SUCCESS = {
     "model": "qwen3.5:9b",
@@ -98,7 +101,21 @@ class TestNonStreamingChatCompletion:
         # default_model_profile="main" → "qwen3.5:9b"
         assert captured[0]["model"] == "qwen3.5:9b"
 
-    async def test_temperature_and_max_tokens_forwarded(self, client: httpx.AsyncClient):
+    async def test_invalid_json_returns_openai_422(self, client: httpx.AsyncClient):
+        resp = await client.post(
+            "/v1/chat/completions",
+            content=b"{not-json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "invalid_request"
+
+    async def test_schema_error_returns_openai_422(self, client: httpx.AsyncClient):
+        resp = await client.post("/v1/chat/completions", json={"model": "main"})
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "invalid_request"
+
+    async def test_sampling_stop_and_seed_forwarded(self, client: httpx.AsyncClient):
         captured: list[dict] = []
 
         async def capture(request: httpx.Request, *args, **kwargs):
@@ -113,12 +130,19 @@ class TestNonStreamingChatCompletion:
                     "model": "main",
                     "messages": [{"role": "user", "content": "hi"}],
                     "temperature": 0.5,
+                    "top_p": 0.8,
                     "max_tokens": 512,
+                    "stop": ["END"],
+                    "seed": 1234,
                 },
             )
 
-        assert captured[0]["options"]["temperature"] == 0.5
-        assert captured[0]["options"]["num_predict"] == 512
+        options = captured[0]["options"]
+        assert options["temperature"] == 0.5
+        assert options["top_p"] == 0.8
+        assert options["num_predict"] == 512
+        assert options["stop"] == ["END"]
+        assert options["seed"] == 1234
 
     async def test_unknown_model_returns_422(self, client: httpx.AsyncClient):
         resp = await client.post(
@@ -161,6 +185,16 @@ class TestNonStreamingChatCompletion:
         assert resp.status_code == 504
         assert resp.json()["error"]["code"] == "ollama_timeout"
 
+    async def test_malformed_ollama_json_becomes_502(self, client: httpx.AsyncClient):
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(return_value=httpx.Response(200, text="not json"))
+            resp = await client.post(
+                "/v1/chat/completions",
+                json={"model": "main", "messages": [{"role": "user", "content": "hi"}]},
+            )
+        assert resp.status_code == 502
+        assert resp.json()["error"]["code"] == "ollama_invalid_response"
+
     async def test_body_too_large_returns_413(self, client: httpx.AsyncClient):
         # The fixture uses max_request_body_bytes=10_485_760 but we send
         # Content-Length header that exceeds it manually.
@@ -171,6 +205,70 @@ class TestNonStreamingChatCompletion:
         )
         assert resp.status_code == 413
         assert resp.json()["error"]["code"] == "request_too_large"
+
+    async def test_body_too_large_detected_without_content_length(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        import gateway.config as cfg_module
+        import gateway.routes.health as health_module
+        import gateway.routes.chat as chat_module
+        from gateway import main as main_module
+
+        small_limit_settings = Settings(
+            ollama_base_url=OLLAMA_BASE,
+            enable_api_key_auth=False,
+            api_key="",
+            enable_arbitrary_models=False,
+            request_timeout_seconds=10,
+            max_request_body_bytes=64,
+        )
+        monkeypatch.setattr(cfg_module, "settings", small_limit_settings)
+        monkeypatch.setattr(health_module, "settings", small_limit_settings)
+        monkeypatch.setattr(chat_module, "settings", small_limit_settings)
+        monkeypatch.setattr(main_module, "settings", small_limit_settings)
+
+        app = create_app()
+        request_messages = [
+            {
+                "type": "http.request",
+                "body": b'{"model":"main","messages":[{"role":"user","content":"',
+                "more_body": True,
+            },
+            {"type": "http.request", "body": b"x" * 80, "more_body": True},
+            {"type": "http.request", "body": b'"}]}', "more_body": False},
+        ]
+        sent_messages: list[dict] = []
+
+        async def receive() -> dict:
+            return request_messages.pop(0)
+
+        async def send(message: dict) -> None:
+            sent_messages.append(message)
+
+        await app(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "method": "POST",
+                "scheme": "http",
+                "path": "/v1/chat/completions",
+                "raw_path": b"/v1/chat/completions",
+                "query_string": b"",
+                "headers": [(b"content-type", b"application/json")],
+                "client": ("testclient", 50000),
+                "server": ("testserver", 80),
+                "root_path": "",
+            },
+            receive,
+            send,
+        )
+
+        response_start = next(m for m in sent_messages if m["type"] == "http.response.start")
+        response_body = b"".join(
+            m.get("body", b"") for m in sent_messages if m["type"] == "http.response.body"
+        )
+        assert response_start["status"] == 413
+        assert json.loads(response_body)["error"]["code"] == "request_too_large"
 
     async def test_arbitrary_model_allowed_when_enabled(self, client: httpx.AsyncClient):
         """With ENABLE_ARBITRARY_MODELS=true, any model name should pass through."""
@@ -296,3 +394,33 @@ class TestStreamingChatCompletion:
         assert len(data_lines) == 4
         content_chunks = [json.loads(l)["choices"][0]["delta"].get("content") for l in data_lines[1:-1]]
         assert content_chunks == ["A", "B"]
+
+    async def test_streaming_connect_error_becomes_502(self, client: httpx.AsyncClient):
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(side_effect=httpx.ConnectError("refused"))
+            resp = await client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "main",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "stream": True,
+                },
+            )
+
+        assert resp.status_code == 502
+        assert resp.json()["error"]["code"] == "ollama_error"
+
+    async def test_streaming_timeout_becomes_504(self, client: httpx.AsyncClient):
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(side_effect=httpx.TimeoutException("timeout"))
+            resp = await client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "main",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "stream": True,
+                },
+            )
+
+        assert resp.status_code == 504
+        assert resp.json()["error"]["code"] == "ollama_timeout"

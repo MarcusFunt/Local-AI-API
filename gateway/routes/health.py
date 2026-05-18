@@ -13,6 +13,16 @@ router = APIRouter()
 _HEALTH_TIMEOUT = 5.0
 
 
+def _health_error(message: str, code: str) -> dict[str, dict[str, str]]:
+    return {
+        "error": {
+            "message": message,
+            "type": "upstream_error",
+            "code": code,
+        }
+    }
+
+
 @router.get("/health")
 async def health() -> JSONResponse:
     return JSONResponse(
@@ -32,18 +42,18 @@ async def health_ollama() -> JSONResponse:
         if response.status_code < 400:
             return JSONResponse({"status": "ok"})
         return JSONResponse(
-            {"status": "error", "detail": f"Ollama returned HTTP {response.status_code}"},
+            _health_error(f"Ollama returned HTTP {response.status_code}", "ollama_error"),
             status_code=502,
         )
     except httpx.ConnectError as exc:
         logger.warning("Ollama health check connect error: %s", exc)
         return JSONResponse(
-            {"status": "error", "detail": "Could not connect to Ollama"},
+            _health_error("Could not connect to Ollama", "ollama_error"),
             status_code=502,
         )
     except httpx.TimeoutException as exc:
         logger.warning("Ollama health check timed out: %s", exc)
         return JSONResponse(
-            {"status": "error", "detail": "Ollama health check timed out"},
+            _health_error("Ollama health check timed out", "ollama_timeout"),
             status_code=502,
         )

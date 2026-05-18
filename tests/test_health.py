@@ -6,6 +6,7 @@ import httpx
 import respx
 
 pytestmark = pytest.mark.asyncio
+OLLAMA_BASE = "http://127.0.0.1:11434"
 
 
 class TestHealthGateway:
@@ -20,7 +21,7 @@ class TestHealthGateway:
 
 class TestHealthOllama:
     async def test_ollama_up_returns_200(self, client: httpx.AsyncClient):
-        with respx.mock(base_url="http://ollama-test.local") as mock:
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
             mock.get("/api/tags").mock(
                 return_value=httpx.Response(200, json={"models": []})
             )
@@ -29,28 +30,28 @@ class TestHealthOllama:
         assert resp.json()["status"] == "ok"
 
     async def test_ollama_500_returns_502(self, client: httpx.AsyncClient):
-        with respx.mock(base_url="http://ollama-test.local") as mock:
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
             mock.get("/api/tags").mock(
                 return_value=httpx.Response(500, text="internal error")
             )
             resp = await client.get("/health/ollama")
         assert resp.status_code == 502
-        assert resp.json()["status"] == "error"
+        assert resp.json()["error"]["code"] == "ollama_error"
 
     async def test_ollama_connect_error_returns_502(self, client: httpx.AsyncClient):
-        with respx.mock(base_url="http://ollama-test.local") as mock:
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
             mock.get("/api/tags").mock(side_effect=httpx.ConnectError("refused"))
             resp = await client.get("/health/ollama")
         assert resp.status_code == 502
-        body = resp.json()
-        assert body["status"] == "error"
-        assert "connect" in body["detail"].lower()
+        error = resp.json()["error"]
+        assert error["code"] == "ollama_error"
+        assert "connect" in error["message"].lower()
 
     async def test_ollama_timeout_returns_502(self, client: httpx.AsyncClient):
-        with respx.mock(base_url="http://ollama-test.local") as mock:
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
             mock.get("/api/tags").mock(side_effect=httpx.TimeoutException("timeout"))
             resp = await client.get("/health/ollama")
         assert resp.status_code == 502
-        body = resp.json()
-        assert body["status"] == "error"
-        assert "timed out" in body["detail"].lower()
+        error = resp.json()["error"]
+        assert error["code"] == "ollama_timeout"
+        assert "timed out" in error["message"].lower()

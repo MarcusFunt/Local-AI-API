@@ -11,6 +11,7 @@ from gateway.main import create_app
 import gateway.client as client_module
 
 pytestmark = pytest.mark.asyncio
+OLLAMA_BASE = "http://127.0.0.1:11434"
 
 
 def _make_client(settings: Settings) -> httpx.AsyncClient:
@@ -57,7 +58,7 @@ async def _cleanup():
 class TestAuthDisabled:
     async def test_no_header_allowed(self):
         settings = Settings(
-            ollama_base_url="http://ollama-test.local",
+            ollama_base_url=OLLAMA_BASE,
             enable_api_key_auth=False,
             api_key="secret",
             enable_arbitrary_models=False,
@@ -65,7 +66,7 @@ class TestAuthDisabled:
             max_request_body_bytes=10_485_760,
         )
         async with _make_client(settings) as ac:
-            with respx.mock(base_url="http://ollama-test.local") as mock:
+            with respx.mock(base_url=OLLAMA_BASE) as mock:
                 mock.post("/api/chat").mock(
                     return_value=httpx.Response(200, json=OLLAMA_SUCCESS)
                 )
@@ -74,7 +75,7 @@ class TestAuthDisabled:
 
     async def test_wrong_key_still_allowed_when_auth_disabled(self):
         settings = Settings(
-            ollama_base_url="http://ollama-test.local",
+            ollama_base_url=OLLAMA_BASE,
             enable_api_key_auth=False,
             api_key="secret",
             enable_arbitrary_models=False,
@@ -82,7 +83,7 @@ class TestAuthDisabled:
             max_request_body_bytes=10_485_760,
         )
         async with _make_client(settings) as ac:
-            with respx.mock(base_url="http://ollama-test.local") as mock:
+            with respx.mock(base_url=OLLAMA_BASE) as mock:
                 mock.post("/api/chat").mock(
                     return_value=httpx.Response(200, json=OLLAMA_SUCCESS)
                 )
@@ -97,7 +98,7 @@ class TestAuthDisabled:
 class TestAuthEnabled:
     def _auth_settings(self) -> Settings:
         return Settings(
-            ollama_base_url="http://ollama-test.local",
+            ollama_base_url=OLLAMA_BASE,
             enable_api_key_auth=True,
             api_key="test-secret",
             enable_arbitrary_models=False,
@@ -123,7 +124,7 @@ class TestAuthEnabled:
 
     async def test_correct_key_allowed(self):
         async with _make_client(self._auth_settings()) as ac:
-            with respx.mock(base_url="http://ollama-test.local") as mock:
+            with respx.mock(base_url=OLLAMA_BASE) as mock:
                 mock.post("/api/chat").mock(
                     return_value=httpx.Response(200, json=OLLAMA_SUCCESS)
                 )
@@ -141,7 +142,7 @@ class TestAuthEnabled:
 
     async def test_health_ollama_bypasses_auth_no_header(self):
         async with _make_client(self._auth_settings()) as ac:
-            with respx.mock(base_url="http://ollama-test.local") as mock:
+            with respx.mock(base_url=OLLAMA_BASE) as mock:
                 mock.get("/api/tags").mock(
                     return_value=httpx.Response(200, json={"models": []})
                 )
