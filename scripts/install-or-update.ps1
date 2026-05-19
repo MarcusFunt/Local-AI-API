@@ -6,7 +6,14 @@ param(
     [switch]$SkipRepoSync,
     [switch]$SkipTailscaleServe,
     [switch]$NoScheduledTask,
-    [switch]$ScheduledRun
+    [switch]$ScheduledRun,
+    [ValidateSet("default", "none", "logon", "daily", "weekly", "every-hours")]
+    [string]$UpdateSchedule = $(if ([string]::IsNullOrWhiteSpace($env:LOCAL_AI_API_UPDATE_SCHEDULE)) { "default" } else { $env:LOCAL_AI_API_UPDATE_SCHEDULE }),
+    [string]$UpdateTime = $(if ([string]::IsNullOrWhiteSpace($env:LOCAL_AI_API_UPDATE_TIME)) { "03:00" } else { $env:LOCAL_AI_API_UPDATE_TIME }),
+    [ValidateSet("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")]
+    [string]$WeeklyDay = $(if ([string]::IsNullOrWhiteSpace($env:LOCAL_AI_API_UPDATE_WEEKLY_DAY)) { "Sunday" } else { $env:LOCAL_AI_API_UPDATE_WEEKLY_DAY }),
+    [ValidateRange(1, 24)]
+    [int]$EveryHours = $(if ([string]::IsNullOrWhiteSpace($env:LOCAL_AI_API_UPDATE_EVERY_HOURS)) { 6 } else { [int]$env:LOCAL_AI_API_UPDATE_EVERY_HOURS })
 )
 
 Set-StrictMode -Version Latest
@@ -122,8 +129,59 @@ function Get-ReexecArguments {
     if ($ScheduledRun) {
         $arguments += "-ScheduledRun"
     }
+    if ($UpdateSchedule -ne "default") {
+        $arguments += @("-UpdateSchedule", $UpdateSchedule)
+    }
+    if ($UpdateTime -ne "03:00") {
+        $arguments += @("-UpdateTime", $UpdateTime)
+    }
+    if ($WeeklyDay -ne "Sunday") {
+        $arguments += @("-WeeklyDay", $WeeklyDay)
+    }
+    if ($EveryHours -ne 6) {
+        $arguments += @("-EveryHours", "$EveryHours")
+    }
 
     return $arguments
+}
+
+function Get-TimeOfDay {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    if ($Value -notmatch "^([01][0-9]|2[0-3]):([0-5][0-9])$") {
+        Stop-Fail "Update time must use 24-hour HH:mm format."
+    }
+
+    return [TimeSpan]::new([int]$Matches[1], [int]$Matches[2], 0)
+}
+
+function Get-TriggerDateTime {
+    param([Parameter(Mandatory = $true)][TimeSpan]$Time)
+
+    return [datetime]::Today.Add($Time)
+}
+
+function Get-EveryHoursTimes {
+    param(
+        [Parameter(Mandatory = $true)][TimeSpan]$StartTime,
+        [Parameter(Mandatory = $true)][int]$IntervalHours
+    )
+
+    if (24 % $IntervalHours -ne 0) {
+        Stop-Fail "Every-hours update interval must divide evenly into 24."
+    }
+
+    $times = @()
+    $count = [int](24 / $IntervalHours)
+    $startMinutes = [int]$StartTime.TotalMinutes
+    for ($i = 0; $i -lt $count; $i++) {
+        $totalMinutes = ($startMinutes + ($i * $IntervalHours * 60)) % 1440
+        $hour = [math]::Floor($totalMinutes / 60)
+        $minute = $totalMinutes % 60
+        $times += [TimeSpan]::new($hour, $minute, 0)
+    }
+
+    return $times | Sort-Object TotalMinutes
 }
 
 function Sync-RepoToGitHub {
@@ -375,30 +433,59 @@ function Install-ScheduledTask {
         [Parameter(Mandatory = $true)][string]$ScriptPath
     )
 
-    if ($NoScheduledTask) {
-        Write-Log "Skipping scheduled task installation because -NoScheduledTask was provided."
-        return
-    }
-
     if ($ScheduledRun) {
         Write-Log "Running from scheduled task; skipping scheduled task installation."
         return
     }
 
-    $taskArguments = "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -ScheduledRun"
+    if ($NoScheduledTask -or $UpdateSchedule -eq "none") {
+        Write-Log "Scheduled updates disabled; removing existing user scheduled task if present."
+        $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        if ($null -ne $existingTask) {
+            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+        }
+        return
+    }
+
+    $taskArguments = "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -ScheduledRun -NoScheduledTask"
     if ($Accelerator -ne "auto") {
         $taskArguments += " -Accelerator $Accelerator"
+    }
+    if ($SkipRepoSync) {
+        $taskArguments += " -SkipRepoSync"
     }
     if ($SkipTailscaleServe) {
         $taskArguments += " -SkipTailscaleServe"
     }
 
-    Write-Log "Installing user scheduled update task."
+    $timeOfDay = Get-TimeOfDay -Value $UpdateTime
+    $triggers = @()
+    switch ($UpdateSchedule) {
+        "default" {
+            $triggers += New-ScheduledTaskTrigger -AtLogOn
+            $triggers += New-ScheduledTaskTrigger -Daily -At (Get-TriggerDateTime -Time $timeOfDay)
+        }
+        "logon" {
+            $triggers += New-ScheduledTaskTrigger -AtLogOn
+        }
+        "daily" {
+            $triggers += New-ScheduledTaskTrigger -Daily -At (Get-TriggerDateTime -Time $timeOfDay)
+        }
+        "weekly" {
+            $triggers += New-ScheduledTaskTrigger -Weekly -DaysOfWeek $WeeklyDay -At (Get-TriggerDateTime -Time $timeOfDay)
+        }
+        "every-hours" {
+            foreach ($triggerTime in (Get-EveryHoursTimes -StartTime $timeOfDay -IntervalHours $EveryHours)) {
+                $triggers += New-ScheduledTaskTrigger -Daily -At (Get-TriggerDateTime -Time $triggerTime)
+            }
+        }
+        default {
+            Stop-Fail "Unknown update schedule: $UpdateSchedule"
+        }
+    }
+
+    Write-Log "Installing user scheduled update task using schedule '$UpdateSchedule'."
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $taskArguments -WorkingDirectory $Root
-    $triggers = @(
-        (New-ScheduledTaskTrigger -AtLogOn)
-        (New-ScheduledTaskTrigger -Daily -At 3am)
-    )
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 
     Register-ScheduledTask `

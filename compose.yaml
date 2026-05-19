@@ -2,7 +2,7 @@ name: local-ai-api
 
 x-gateway-environment: &gateway-environment
   OLLAMA_BASE_URL: http://127.0.0.1:11434
-  HOST: 127.0.0.1
+  HOST: 0.0.0.0
   PORT: "8080"
   DEFAULT_MODEL_PROFILE: ${DEFAULT_MODEL_PROFILE:-main}
   ENABLE_ARBITRARY_MODELS: ${ENABLE_ARBITRARY_MODELS:-false}
@@ -40,9 +40,10 @@ services:
       - -c
       - |
         set -eu
-        ollama pull qwen3.5:9b
-        ollama pull qwen3.5:4b
-        ollama pull qwen3.5:0.8b
+        models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b}"
+        for model in $$models; do
+          ollama pull "$$model"
+        done
     depends_on:
       ollama:
         condition: service_healthy

@@ -58,13 +58,22 @@ The script:
 - installs Docker Engine and the Compose plugin if needed
 - runs Ollama in Docker with the gateway sharing Ollama's network namespace
 - keeps raw Ollama private on `127.0.0.1:11434` inside Docker and publishes only `127.0.0.1:8080`
+- binds the gateway to `0.0.0.0` only inside the private Docker network namespace so the host loopback publish works
 - auto-selects NVIDIA, AMD/ROCm, or CPU compose overrides
 - builds the gateway image and runs `python -m pytest tests -v` inside it before restarting the live gateway
-- pulls `qwen3.5:9b`, `qwen3.5:4b`, and `qwen3.5:0.8b`
+- pulls the space-separated `OLLAMA_MODELS` list from `.env`, defaulting to `qwen3.5:9b`, `qwen3.5:4b`, and `qwen3.5:0.8b`
 - installs Tailscale if needed, runs `tailscale up` interactively when unauthenticated, and configures `tailscale serve --bg http://127.0.0.1:8080`
-- installs a systemd timer that runs on boot and daily using the same script
+- installs a systemd timer using the selected update schedule, defaulting to boot and daily using the same script
 
 Important: the script intentionally forces the deployment checkout to match `origin/main`. Commit and push any tracked local work before running it on a machine where you care about those changes.
+
+Useful installer options:
+
+```bash
+./scripts/install-or-update.sh --accelerator cpu --update-schedule daily --update-time 03:00
+./scripts/install-or-update.sh --update-schedule every-hours --every-hours 6 --update-time 03:00
+./scripts/install-or-update.sh --update-schedule none
+```
 
 Useful verification commands after install:
 
@@ -98,13 +107,22 @@ The Windows script:
 - starts Docker Desktop if it is installed but not already running
 - runs Ollama in Docker with the gateway sharing Ollama's network namespace
 - keeps raw Ollama private on `127.0.0.1:11434` inside Docker and publishes only `127.0.0.1:8080`
+- binds the gateway to `0.0.0.0` only inside the private Docker network namespace so the host loopback publish works
 - auto-selects NVIDIA when Docker GPU access works, otherwise uses the CPU compose override
 - builds the gateway image and runs `python -m pytest tests -v` inside it before restarting the live gateway
-- pulls `qwen3.5:9b`, `qwen3.5:4b`, and `qwen3.5:0.8b`
+- pulls the space-separated `OLLAMA_MODELS` list from `.env`, defaulting to `qwen3.5:9b`, `qwen3.5:4b`, and `qwen3.5:0.8b`
 - configures `tailscale serve --bg http://127.0.0.1:8080` when Tailscale is installed and authenticated
-- installs a per-user Scheduled Task that runs at logon and daily using the same script
+- installs a per-user Scheduled Task using the selected update schedule, defaulting to logon and daily using the same script
 
 AMD/ROCm Docker acceleration is Linux-only in this project; Windows hosts use CPU unless NVIDIA Docker GPU access is available.
+
+Useful installer options:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-or-update.ps1 -Accelerator cpu -UpdateSchedule daily -UpdateTime 03:00
+powershell -ExecutionPolicy Bypass -File .\scripts\install-or-update.ps1 -UpdateSchedule every-hours -EveryHours 6 -UpdateTime 03:00
+powershell -ExecutionPolicy Bypass -File .\scripts\install-or-update.ps1 -UpdateSchedule none
+```
 
 Useful verification commands after install:
 
@@ -121,6 +139,20 @@ To run a manual update later:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-or-update.ps1
 ```
+
+---
+
+## Graphical installer
+
+Run the Tkinter GUI when you want to choose models, the default profile, optional bearer-token auth, Tailscale setup, accelerator profile, and repository auto-update cadence:
+
+```powershell
+python .\scripts\install_gui.py
+```
+
+On Linux, use `python3 scripts/install_gui.py` and install your distribution's Tkinter package if needed. The GUI writes `.env`, stores its own UI state in `.local/install-gui.json`, and then runs the same Docker installer scripts described above.
+
+The model selector writes `OLLAMA_MODELS` using the approved model tags only. The gateway still rejects arbitrary model names unless `ENABLE_ARBITRARY_MODELS=true` is set manually.
 
 ---
 
@@ -169,12 +201,30 @@ uvicorn gateway.main:app --host 127.0.0.1 --port 8080
 ```
 
 The gateway now listens on `http://127.0.0.1:8080`.
+Open `http://127.0.0.1:8080/` or `http://127.0.0.1:8080/status` for the built-in status GUI.
 
 For development with auto-reload:
 
 ```bash
 uvicorn gateway.main:app --host 127.0.0.1 --port 8080 --reload
 ```
+
+---
+
+## Status web GUI
+
+The gateway container serves a small status GUI from the same FastAPI process:
+
+| Route | Purpose |
+|---|---|
+| `/` | Status GUI |
+| `/status` | Status GUI alias |
+| `/status.json` | JSON status feed for gateway, Ollama, model readiness, and runtime settings |
+| `/status/check` | Runs a non-streaming end-to-end check against the `dev` profile (`qwen3.5:0.8b`) |
+
+The status page shows gateway runtime health, Ollama connectivity, whether `main`, `small`, and `dev` are pulled, and the latest explicit dev-model inference check. The check uses a fixed tiny prompt and does not log prompt content.
+
+If optional API-key auth is enabled, the status GUI is protected like other non-health routes. Health endpoints remain available without auth.
 
 ---
 
@@ -213,6 +263,12 @@ curl http://localhost:8080/v1/chat/completions \
     "messages": [{"role": "user", "content": "Count to five."}],
     "stream": true
   }'
+```
+
+End-to-end dev-model check through the status endpoint:
+
+```bash
+curl -X POST http://localhost:8080/status/check
 ```
 
 Using a direct model tag instead of an alias:
@@ -330,6 +386,9 @@ Docker-only variables used by `compose.yaml`:
 |---|---|---|
 | `OLLAMA_IMAGE_TAG` | `latest` | Ollama Docker image tag. |
 | `OLLAMA_KEEP_ALIVE` | `5m` | How long Ollama keeps models loaded after use. |
+| `OLLAMA_MODELS` | `qwen3.5:9b qwen3.5:4b qwen3.5:0.8b` | Space-separated model tags pulled by the Docker `model-init` service. |
+
+In Docker, `compose.yaml` overrides `HOST=0.0.0.0` inside the shared Ollama/gateway network namespace, while the only published host port remains `127.0.0.1:8080`.
 
 ### Supported model values
 

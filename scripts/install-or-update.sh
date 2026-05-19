@@ -7,6 +7,14 @@ REMOTE_BRANCH="${REMOTE_BRANCH:-main}"
 GATEWAY_HEALTH_URL="${GATEWAY_HEALTH_URL:-http://127.0.0.1:8080/health}"
 OLLAMA_HEALTH_URL="${OLLAMA_HEALTH_URL:-http://127.0.0.1:8080/health/ollama}"
 LOCK_FILE="${LOCK_FILE:-/tmp/local-ai-api-install.lock}"
+ACCELERATOR="${LOCAL_AI_API_ACCELERATOR:-auto}"
+SKIP_REPO_SYNC="${LOCAL_AI_API_SKIP_REPO_SYNC:-0}"
+SKIP_TAILSCALE_SERVE="${LOCAL_AI_API_SKIP_TAILSCALE_SERVE:-0}"
+NO_SCHEDULED_TASK="${LOCAL_AI_API_NO_SCHEDULED_TASK:-0}"
+UPDATE_SCHEDULE="${LOCAL_AI_API_UPDATE_SCHEDULE:-default}"
+UPDATE_TIME="${LOCAL_AI_API_UPDATE_TIME:-03:00}"
+UPDATE_WEEKLY_DAY="${LOCAL_AI_API_UPDATE_WEEKLY_DAY:-Sunday}"
+UPDATE_EVERY_HOURS="${LOCAL_AI_API_UPDATE_EVERY_HOURS:-6}"
 
 log() {
   printf '[%s] %s\n' "$(date -Iseconds)" "$*"
@@ -19,6 +27,84 @@ die() {
 
 have() {
   command -v "$1" >/dev/null 2>&1
+}
+
+parse_args() {
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --accelerator)
+        [[ "$#" -ge 2 ]] || die "--accelerator requires a value."
+        ACCELERATOR="$2"
+        shift 2
+        ;;
+      --skip-repo-sync)
+        SKIP_REPO_SYNC=1
+        shift
+        ;;
+      --skip-tailscale-serve)
+        SKIP_TAILSCALE_SERVE=1
+        shift
+        ;;
+      --no-scheduled-task)
+        NO_SCHEDULED_TASK=1
+        shift
+        ;;
+      --scheduled-run)
+        export LOCAL_AI_API_SYSTEMD=1
+        shift
+        ;;
+      --update-schedule)
+        [[ "$#" -ge 2 ]] || die "--update-schedule requires a value."
+        UPDATE_SCHEDULE="$2"
+        shift 2
+        ;;
+      --update-time)
+        [[ "$#" -ge 2 ]] || die "--update-time requires a value."
+        UPDATE_TIME="$2"
+        shift 2
+        ;;
+      --weekly-day)
+        [[ "$#" -ge 2 ]] || die "--weekly-day requires a value."
+        UPDATE_WEEKLY_DAY="$2"
+        shift 2
+        ;;
+      --every-hours)
+        [[ "$#" -ge 2 ]] || die "--every-hours requires a value."
+        UPDATE_EVERY_HOURS="$2"
+        shift 2
+        ;;
+      *)
+        die "Unknown argument: $1"
+        ;;
+    esac
+  done
+
+  validate_options
+}
+
+validate_options() {
+  case "${ACCELERATOR}" in
+    auto | cpu | nvidia | amd) ;;
+    *) die "Unknown accelerator: ${ACCELERATOR}" ;;
+  esac
+
+  case "${UPDATE_SCHEDULE}" in
+    default | none | logon | daily | weekly | every-hours) ;;
+    *) die "Unknown update schedule: ${UPDATE_SCHEDULE}" ;;
+  esac
+
+  [[ "${UPDATE_TIME}" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die "Update time must use 24-hour HH:mm format."
+
+  case "${UPDATE_WEEKLY_DAY}" in
+    Sunday | Monday | Tuesday | Wednesday | Thursday | Friday | Saturday) ;;
+    *) die "Weekly day must be a full English weekday name." ;;
+  esac
+
+  [[ "${UPDATE_EVERY_HOURS}" =~ ^[0-9]+$ ]] || die "Every-hours interval must be numeric."
+  UPDATE_EVERY_HOURS=$((10#${UPDATE_EVERY_HOURS}))
+  if (( UPDATE_EVERY_HOURS < 1 || UPDATE_EVERY_HOURS > 24 || 24 % UPDATE_EVERY_HOURS != 0 )); then
+    die "Every-hours update interval must divide evenly into 24."
+  fi
 }
 
 require_linux() {
@@ -58,6 +144,11 @@ sync_repo_to_github() {
   local script_path="$2"
   local before_hash after_hash
   shift 2
+
+  if [[ "${SKIP_REPO_SYNC}" == "1" ]]; then
+    log "Skipping repository sync because --skip-repo-sync was provided."
+    return
+  fi
 
   before_hash="$(script_hash "${script_path}")"
 
@@ -180,6 +271,11 @@ install_nvidia_container_toolkit() {
 }
 
 detect_accelerator() {
+  if [[ "${ACCELERATOR}" != "auto" ]]; then
+    printf '%s\n' "${ACCELERATOR}"
+    return
+  fi
+
   if have nvidia-smi; then
     if nvidia_docker_works; then
       printf '%s\n' "nvidia"
@@ -296,6 +392,11 @@ tailscale_is_authenticated() {
 }
 
 configure_tailscale_serve() {
+  if [[ "${SKIP_TAILSCALE_SERVE}" == "1" ]]; then
+    log "Skipping Tailscale Serve configuration because --skip-tailscale-serve was provided."
+    return
+  fi
+
   install_tailscale || return
 
   if ! tailscale_is_authenticated; then
@@ -330,9 +431,59 @@ service_group() {
   id -gn "$(service_user)"
 }
 
+systemd_weekday() {
+  case "$1" in
+    Sunday) printf '%s\n' "Sun" ;;
+    Monday) printf '%s\n' "Mon" ;;
+    Tuesday) printf '%s\n' "Tue" ;;
+    Wednesday) printf '%s\n' "Wed" ;;
+    Thursday) printf '%s\n' "Thu" ;;
+    Friday) printf '%s\n' "Fri" ;;
+    Saturday) printf '%s\n' "Sat" ;;
+    *) die "Unknown weekday: $1" ;;
+  esac
+}
+
+timer_calendar_lines() {
+  local hour minute start_minutes total_minutes trigger_hour trigger_minute count
+
+  case "${UPDATE_SCHEDULE}" in
+    default)
+      printf '%s\n' "OnBootSec=5min"
+      printf '%s\n' "OnCalendar=daily"
+      ;;
+    logon)
+      printf '%s\n' "OnBootSec=5min"
+      ;;
+    daily)
+      printf 'OnCalendar=*-*-* %s:00\n' "${UPDATE_TIME}"
+      ;;
+    weekly)
+      printf 'OnCalendar=%s *-*-* %s:00\n' "$(systemd_weekday "${UPDATE_WEEKLY_DAY}")" "${UPDATE_TIME}"
+      ;;
+    every-hours)
+      hour="${UPDATE_TIME%%:*}"
+      minute="${UPDATE_TIME##*:}"
+      start_minutes=$((10#${hour} * 60 + 10#${minute}))
+      count=$((24 / UPDATE_EVERY_HOURS))
+      for ((i = 0; i < count; i++)); do
+        total_minutes=$(((start_minutes + (i * UPDATE_EVERY_HOURS * 60)) % 1440))
+        trigger_hour=$((total_minutes / 60))
+        trigger_minute=$((total_minutes % 60))
+        printf '%02d:%02d\n' "${trigger_hour}" "${trigger_minute}"
+      done | sort | while read -r trigger_time; do
+        printf 'OnCalendar=*-*-* %s:00\n' "${trigger_time}"
+      done
+      ;;
+    *)
+      die "Unknown update schedule: ${UPDATE_SCHEDULE}"
+      ;;
+  esac
+}
+
 install_systemd_units() {
   local root="$1"
-  local user group
+  local user group timer_lines
 
   if [[ "${LOCAL_AI_API_SYSTEMD:-}" == "1" ]]; then
     log "Running under systemd; skipping systemd unit installation."
@@ -344,10 +495,17 @@ install_systemd_units() {
     return
   }
 
+  if [[ "${NO_SCHEDULED_TASK}" == "1" || "${UPDATE_SCHEDULE}" == "none" ]]; then
+    log "Scheduled updates disabled; removing existing systemd timer if present."
+    sudo_cmd systemctl disable --now local-ai-api-update.timer >/dev/null 2>&1 || true
+    return
+  fi
+
   user="$(service_user)"
   group="$(service_group)"
+  timer_lines="$(timer_calendar_lines)"
 
-  log "Installing systemd update service and timer."
+  log "Installing systemd update service and timer using schedule '${UPDATE_SCHEDULE}'."
   sudo_cmd tee /etc/systemd/system/local-ai-api-update.service >/dev/null <<EOF
 [Unit]
 Description=Update and restart Local AI API Docker stack
@@ -361,16 +519,18 @@ Group=${group}
 SupplementaryGroups=docker
 WorkingDirectory=${root}
 Environment=LOCAL_AI_API_SYSTEMD=1
-ExecStart=${root}/scripts/install-or-update.sh
+Environment=LOCAL_AI_API_ACCELERATOR=${ACCELERATOR}
+Environment=LOCAL_AI_API_SKIP_REPO_SYNC=${SKIP_REPO_SYNC}
+Environment=LOCAL_AI_API_SKIP_TAILSCALE_SERVE=${SKIP_TAILSCALE_SERVE}
+ExecStart=${root}/scripts/install-or-update.sh --scheduled-run --no-scheduled-task
 EOF
 
-  sudo_cmd tee /etc/systemd/system/local-ai-api-update.timer >/dev/null <<'EOF'
+  sudo_cmd tee /etc/systemd/system/local-ai-api-update.timer >/dev/null <<EOF
 [Unit]
-Description=Run Local AI API updater at boot and daily
+Description=Run Local AI API updater
 
 [Timer]
-OnBootSec=5min
-OnCalendar=daily
+${timer_lines}
 Persistent=true
 Unit=local-ai-api-update.service
 
@@ -384,8 +544,10 @@ EOF
 
 main() {
   local root script_path accelerator
+  local -a original_args=("$@")
   local -a compose_args
 
+  parse_args "$@"
   require_linux
   acquire_lock
 
@@ -393,7 +555,7 @@ main() {
   cd "${root}"
   script_path="${root}/scripts/install-or-update.sh"
 
-  sync_repo_to_github "${root}" "${script_path}" "$@"
+  sync_repo_to_github "${root}" "${script_path}" "${original_args[@]}"
 
   install_docker_engine
 

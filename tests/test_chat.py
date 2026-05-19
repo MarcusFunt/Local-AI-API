@@ -102,6 +102,7 @@ class TestNonStreamingChatCompletion:
             )
 
         assert captured[0]["model"] == "qwen3.5:0.8b"
+        assert captured[0]["think"] is False
 
     async def test_omitted_model_uses_default_profile(self, client: httpx.AsyncClient):
         captured: list[dict] = []

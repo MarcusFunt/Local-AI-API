@@ -59,6 +59,7 @@ def _build_ollama_body(
         "model": resolved_model,
         "messages": request_dict["messages"],
         "stream": stream,
+        "think": False,
     }
 
     options: dict[str, Any] = {}

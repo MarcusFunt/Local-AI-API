@@ -24,4 +24,4 @@ RUN chown -R app:app /app
 USER app
 EXPOSE 8080
 
-CMD ["python", "-m", "uvicorn", "gateway.main:app", "--host", "127.0.0.1", "--port", "8080"]
+CMD ["python", "-m", "gateway.main"]

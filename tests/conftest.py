@@ -64,11 +64,13 @@ async def client(default_settings: Settings, monkeypatch: pytest.MonkeyPatch):
     import gateway.config as cfg_module
     import gateway.routes.health as health_module
     import gateway.routes.chat as chat_module
+    import gateway.routes.status as status_module
     import gateway.client as client_module
 
     monkeypatch.setattr(cfg_module, "settings", default_settings)
     monkeypatch.setattr(health_module, "settings", default_settings)
     monkeypatch.setattr(chat_module, "settings", default_settings)
+    monkeypatch.setattr(status_module, "settings", default_settings)
 
     # Patch the module-level settings used by middleware (read at request time)
     from gateway import main as main_module

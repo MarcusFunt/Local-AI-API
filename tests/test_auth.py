@@ -18,6 +18,7 @@ def _make_client(settings: Settings) -> httpx.AsyncClient:
     import gateway.config as cfg_module
     import gateway.routes.health as health_module
     import gateway.routes.chat as chat_module
+    import gateway.routes.status as status_module
     from gateway import main as main_module
 
     # We create a fresh app per test so middleware reads the right settings.
@@ -26,6 +27,7 @@ def _make_client(settings: Settings) -> httpx.AsyncClient:
     cfg_module.settings = settings
     health_module.settings = settings
     chat_module.settings = settings
+    status_module.settings = settings
     main_module.settings = settings
 
     app = create_app()
@@ -148,3 +150,13 @@ class TestAuthEnabled:
                 )
                 resp = await ac.get("/health/ollama")
         assert resp.status_code == 200
+
+    async def test_status_gui_requires_auth_no_header(self):
+        async with _make_client(self._auth_settings()) as ac:
+            resp = await ac.get("/status")
+        assert resp.status_code == 401
+
+    async def test_status_json_requires_auth_no_header(self):
+        async with _make_client(self._auth_settings()) as ac:
+            resp = await ac.get("/status.json")
+        assert resp.status_code == 401

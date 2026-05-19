@@ -58,6 +58,7 @@ gateway/
   routes/
     chat.py       — POST /v1/chat/completions
     health.py     — GET /health, GET /health/ollama
+    status.py     — GET /, GET /status, GET /status.json, POST /status/check
 tests/
   conftest.py     — Shared fixtures (settings overrides, async test client)
   test_normalize.py

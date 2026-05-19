@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,6 +22,9 @@ def _compose_config(files: list[str]) -> dict:
     if shutil.which("docker") is None:
         pytest.skip("docker is not installed")
 
+    env = os.environ.copy()
+    env.pop("OLLAMA_MODELS", None)
+
     command = ["docker", "compose"]
     for file_name in files:
         command.extend(["-f", file_name])
@@ -31,6 +35,7 @@ def _compose_config(files: list[str]) -> dict:
         cwd=REPO_ROOT,
         check=True,
         capture_output=True,
+        env=env,
         text=True,
     )
     return json.loads(result.stdout)
@@ -62,14 +67,14 @@ def test_gateway_keeps_ollama_loopback_and_shared_namespace(files: list[str]):
     ollama = config["services"]["ollama"]
 
     assert gateway["environment"]["OLLAMA_BASE_URL"] == "http://127.0.0.1:11434"
-    assert gateway["environment"]["HOST"] == "127.0.0.1"
+    assert gateway["environment"]["HOST"] == "0.0.0.0"
     assert gateway["environment"]["PORT"] == "8080"
     assert gateway["network_mode"] == "service:ollama"
     assert model_init["network_mode"] == "service:ollama"
     assert model_init["entrypoint"][:2] == ["/bin/sh", "-c"]
-    assert "ollama pull qwen3.5:9b" in model_init["entrypoint"][2]
-    assert "ollama pull qwen3.5:4b" in model_init["entrypoint"][2]
-    assert "ollama pull qwen3.5:0.8b" in model_init["entrypoint"][2]
+    assert 'models="qwen3.5:9b qwen3.5:4b qwen3.5:0.8b"' in model_init["entrypoint"][2]
+    assert "for model in $$models" in model_init["entrypoint"][2]
+    assert 'ollama pull "$$model"' in model_init["entrypoint"][2]
     assert ollama["environment"]["OLLAMA_HOST"] == "127.0.0.1:11434"
 
 
