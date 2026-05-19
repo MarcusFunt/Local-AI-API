@@ -149,6 +149,8 @@ def _runtime_status() -> dict[str, Any]:
         "host": settings.host,
         "port": settings.port,
         "default_model_profile": settings.default_model_profile,
+        "default_whisper_model": settings.default_whisper_model,
+        "chatterbox_model": settings.chatterbox_model,
         "api_key_auth_enabled": settings.enable_api_key_auth,
         "arbitrary_models_enabled": settings.enable_arbitrary_models,
         "request_timeout_seconds": settings.request_timeout_seconds,
@@ -848,6 +850,8 @@ _STATUS_HTML = """<!doctype html>
       els.runtime.innerHTML = [
         ["Host", data.gateway.hostname],
         ["Listen", `${data.gateway.host}:${data.gateway.port}`],
+        ["Whisper", data.gateway.default_whisper_model],
+        ["TTS", data.gateway.chatterbox_model],
         ["Python", data.gateway.python],
         ["Platform", data.gateway.platform],
         ["API key auth", data.gateway.api_key_auth_enabled ? "enabled" : "disabled"],

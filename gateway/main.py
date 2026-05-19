@@ -16,6 +16,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import client as ollama_client
 from .config import settings
+from .routes.audio import router as audio_router
 from .routes.chat import router as chat_router
 from .routes.health import router as health_router
 from .routes.status import router as status_router
@@ -219,6 +220,7 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(chat_router)
+    app.include_router(audio_router)
     app.include_router(health_router)
     app.include_router(status_router)
 

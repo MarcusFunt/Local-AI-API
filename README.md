@@ -11,6 +11,8 @@ A private, lightweight OpenAI-compatible gateway for [Ollama](https://ollama.com
 - Proxies requests to Ollama running on `127.0.0.1:11434`
 - Translates Ollama's response format back to the OpenAI envelope
 - Supports both streaming (`stream: true`) and non-streaming responses
+- Accepts `POST /v1/audio/transcriptions` requests using local Whisper models
+- Accepts `POST /v1/audio/speech` requests using local Chatterbox TTS
 - Provides health endpoints at `GET /health` and `GET /health/ollama`
 
 ---
@@ -39,6 +41,8 @@ Tailscale Serve acts as the TLS terminator and access-control layer. The gateway
 - Python 3.11 or later
 - [Ollama](https://ollama.com/download) installed and running
 - [Tailscale](https://tailscale.com/download) installed (for private remote access)
+- FFmpeg installed if you use local Whisper transcription outside Docker
+- Git available if you install the optional Chatterbox audio dependencies outside Docker
 
 ---
 
@@ -164,6 +168,9 @@ cd Local-AI-API
 
 pip install -r requirements.txt
 
+# Optional: install the local Whisper and Chatterbox runtime stacks.
+pip install -r requirements-audio.txt
+
 cp .env.example .env
 # Edit .env if you want to change any defaults (the defaults work for local dev)
 ```
@@ -262,7 +269,32 @@ curl http://localhost:8080/v1/chat/completions \
     "model": "main",
     "messages": [{"role": "user", "content": "Count to five."}],
     "stream": true
-  }'
+}'
+```
+
+Audio transcription with Whisper:
+
+```bash
+curl http://localhost:8080/v1/audio/transcriptions \
+  -F "model=tiny" \
+  -F "file=@sample.wav"
+```
+
+If the `model` form field is omitted, the gateway uses `DEFAULT_WHISPER_MODEL`.
+Set it to `none` to make omitted-model transcription requests fail closed, or send
+`tiny`, `base`, or `small` per request.
+
+Text-to-speech with Chatterbox:
+
+```bash
+curl http://localhost:8080/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "chatterbox",
+    "input": "Hello from the local gateway.",
+    "response_format": "wav"
+  }' \
+  --output speech.wav
 ```
 
 End-to-end dev-model check through the status endpoint:
@@ -374,6 +406,10 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `HOST` | `127.0.0.1` | Gateway listen address. Keep as localhost; Tailscale Serve forwards to it. |
 | `PORT` | `8080` | Gateway listen port. |
 | `DEFAULT_MODEL_PROFILE` | `main` | Profile used when the client omits the `model` field. |
+| `DEFAULT_WHISPER_MODEL` | `none` | Whisper profile used when transcription requests omit `model`; allowed values are `none`, `tiny`, `base`, and `small`. |
+| `WHISPER_DEVICE` | `auto` | Device for Whisper model loading (`auto`, `cpu`, `cuda`, or `mps`). |
+| `CHATTERBOX_MODEL` | `chatterbox` | Chatterbox model used when speech requests omit `model`; allowed values are `chatterbox` and `chatterbox-multilingual`. |
+| `CHATTERBOX_DEVICE` | `auto` | Device for Chatterbox model loading (`auto`, `cpu`, `cuda`, or `mps`). |
 | `ENABLE_ARBITRARY_MODELS` | `false` | If `true`, any model name is forwarded to Ollama. |
 | `ENABLE_API_KEY_AUTH` | `false` | If `true`, requires a `Bearer` token on all non-health requests. |
 | `API_KEY` | *(empty)* | The required non-empty token when `ENABLE_API_KEY_AUTH=true`. |
@@ -403,6 +439,28 @@ The `dev` profile is intended for faster local development and uses [Qwen/Qwen3.
 | `qwen3.5:4b` | `qwen3.5:4b` |
 | `qwen3.5:0.8b` | `qwen3.5:0.8b` |
 | anything else | HTTP 422 (unless `ENABLE_ARBITRARY_MODELS=true`) |
+
+### Supported audio model values
+
+Whisper transcription model values:
+
+| Client sends | Gateway uses |
+|---|---|
+| `none` | disabled; request returns HTTP 422 |
+| `tiny` | Whisper `tiny` |
+| `base` | Whisper `base` |
+| `small` | Whisper `small` |
+
+Chatterbox speech model values:
+
+| Client sends | Gateway uses |
+|---|---|
+| `chatterbox` | English Chatterbox TTS |
+| `chatterbox-multilingual` | Multilingual Chatterbox TTS; optional `language` defaults to `en` |
+
+The local speech endpoint currently returns WAV audio only. If a client sends
+`response_format=mp3`, the gateway returns HTTP 422 instead of silently changing
+the requested format.
 
 ---
 
@@ -473,3 +531,6 @@ All errors use an OpenAI-compatible envelope so clients that parse OpenAI errors
 | Ollama unreachable | 502 |
 | Ollama timed out | 504 |
 | Ollama returned malformed JSON | 502 |
+| Audio model disabled, unknown, or unsupported format | 422 |
+| Whisper or Chatterbox dependency missing | 503 |
+| Whisper or Chatterbox runtime failure | 502 |

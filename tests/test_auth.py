@@ -18,6 +18,7 @@ def _make_client(settings: Settings) -> httpx.AsyncClient:
     import gateway.config as cfg_module
     import gateway.routes.health as health_module
     import gateway.routes.chat as chat_module
+    import gateway.routes.audio as audio_module
     import gateway.routes.status as status_module
     from gateway import main as main_module
 
@@ -27,6 +28,7 @@ def _make_client(settings: Settings) -> httpx.AsyncClient:
     cfg_module.settings = settings
     health_module.settings = settings
     chat_module.settings = settings
+    audio_module.settings = settings
     status_module.settings = settings
     main_module.settings = settings
 
@@ -159,4 +161,21 @@ class TestAuthEnabled:
     async def test_status_json_requires_auth_no_header(self):
         async with _make_client(self._auth_settings()) as ac:
             resp = await ac.get("/status.json")
+        assert resp.status_code == 401
+
+    async def test_audio_transcription_requires_auth_no_header(self):
+        async with _make_client(self._auth_settings()) as ac:
+            resp = await ac.post(
+                "/v1/audio/transcriptions",
+                data={"model": "tiny"},
+                files={"file": ("sample.wav", b"RIFF....WAVE", "audio/wav")},
+            )
+        assert resp.status_code == 401
+
+    async def test_audio_speech_requires_auth_no_header(self):
+        async with _make_client(self._auth_settings()) as ac:
+            resp = await ac.post(
+                "/v1/audio/speech",
+                json={"model": "chatterbox", "input": "hello"},
+            )
         assert resp.status_code == 401

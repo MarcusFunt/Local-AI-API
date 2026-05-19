@@ -5,7 +5,14 @@ import pytest
 from fastapi import HTTPException
 
 from gateway.config import Settings
-from gateway.normalize import MODEL_MAP, resolve_model
+from gateway.normalize import (
+    CHATTERBOX_MODEL_MAP,
+    MODEL_MAP,
+    WHISPER_MODEL_MAP,
+    resolve_chatterbox_model,
+    resolve_model,
+    resolve_whisper_model,
+)
 
 
 def _settings(**overrides) -> Settings:
@@ -82,3 +89,38 @@ class TestWhitespaceHandling:
 
     def test_whitespace_around_direct_tag(self):
         assert resolve_model("  qwen3.5:9b  ", _settings()) == "qwen3.5:9b"
+
+    def test_whitespace_around_whisper_alias(self):
+        assert resolve_whisper_model("  tiny  ", _settings()) == "tiny"
+
+    def test_whitespace_around_chatterbox_alias(self):
+        assert resolve_chatterbox_model("  chatterbox  ", _settings()) == "chatterbox"
+
+
+class TestWhisperModelMapping:
+    def test_none_disables_whisper(self):
+        assert resolve_whisper_model("none", _settings()) is None
+
+    def test_all_whisper_aliases_covered(self):
+        s = _settings()
+        for alias, expected in WHISPER_MODEL_MAP.items():
+            assert resolve_whisper_model(alias, s) == expected
+
+    def test_unknown_whisper_model_raises_422(self):
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_whisper_model("large", _settings())
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"]["code"] == "audio_model_not_found"
+
+
+class TestChatterboxModelMapping:
+    def test_all_chatterbox_aliases_covered(self):
+        s = _settings()
+        for alias, expected in CHATTERBOX_MODEL_MAP.items():
+            assert resolve_chatterbox_model(alias, s) == expected
+
+    def test_unknown_chatterbox_model_raises_422(self):
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_chatterbox_model("other-tts", _settings())
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"]["code"] == "audio_model_not_found"

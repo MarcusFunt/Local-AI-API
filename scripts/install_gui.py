@@ -23,6 +23,16 @@ FALLBACK_MODEL_MAP = {
     "small": "qwen3.5:4b",
     "dev": "qwen3.5:0.8b",
 }
+FALLBACK_WHISPER_MODEL_MAP: dict[str, str | None] = {
+    "none": None,
+    "tiny": "tiny",
+    "base": "base",
+    "small": "small",
+}
+FALLBACK_CHATTERBOX_MODEL_MAP = {
+    "chatterbox": "chatterbox",
+    "chatterbox-multilingual": "chatterbox-multilingual",
+}
 SCHEDULE_LABELS = {
     "default": "At startup/logon and daily",
     "none": "No automatic updates",
@@ -53,6 +63,8 @@ class InstallConfig:
     update_time: str = "03:00"
     weekly_day: str = "Sunday"
     every_hours: int = 6
+    whisper_model: str = "none"
+    chatterbox_model: str = "chatterbox"
     enable_api_key_auth: bool = False
     api_key: str = ""
 
@@ -74,6 +86,46 @@ def read_model_map(repo_root: Path = REPO_ROOT) -> dict[str, str]:
             return dict(value)
 
     return FALLBACK_MODEL_MAP.copy()
+
+
+def read_whisper_model_map(repo_root: Path = REPO_ROOT) -> dict[str, str | None]:
+    normalize_path = repo_root / "gateway" / "normalize.py"
+    try:
+        tree = ast.parse(normalize_path.read_text(encoding="utf-8"))
+    except OSError:
+        return FALLBACK_WHISPER_MODEL_MAP.copy()
+
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == "WHISPER_MODEL_MAP" for target in node.targets):
+            continue
+        value = ast.literal_eval(node.value)
+        if isinstance(value, dict) and all(
+            isinstance(k, str) and (isinstance(v, str) or v is None) for k, v in value.items()
+        ):
+            return dict(value)
+
+    return FALLBACK_WHISPER_MODEL_MAP.copy()
+
+
+def read_chatterbox_model_map(repo_root: Path = REPO_ROOT) -> dict[str, str]:
+    normalize_path = repo_root / "gateway" / "normalize.py"
+    try:
+        tree = ast.parse(normalize_path.read_text(encoding="utf-8"))
+    except OSError:
+        return FALLBACK_CHATTERBOX_MODEL_MAP.copy()
+
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == "CHATTERBOX_MODEL_MAP" for target in node.targets):
+            continue
+        value = ast.literal_eval(node.value)
+        if isinstance(value, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in value.items()):
+            return dict(value)
+
+    return FALLBACK_CHATTERBOX_MODEL_MAP.copy()
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -104,14 +156,25 @@ def _aliases_from_model_tags(model_map: dict[str, str], model_tags: str) -> list
     return aliases or list(model_map)
 
 
-def load_previous_config(repo_root: Path, model_map: dict[str, str]) -> InstallConfig:
+def load_previous_config(
+    repo_root: Path,
+    model_map: dict[str, str],
+    whisper_model_map: dict[str, str | None] | None = None,
+    chatterbox_model_map: dict[str, str] | None = None,
+) -> InstallConfig:
     config = InstallConfig(models=list(model_map))
+    whisper_model_map = whisper_model_map or FALLBACK_WHISPER_MODEL_MAP
+    chatterbox_model_map = chatterbox_model_map or FALLBACK_CHATTERBOX_MODEL_MAP
     env_values = parse_env_file(repo_root / ".env")
 
     if env_values.get("OLLAMA_MODELS"):
         config.models = _aliases_from_model_tags(model_map, env_values["OLLAMA_MODELS"])
     if env_values.get("DEFAULT_MODEL_PROFILE") in model_map:
         config.default_profile = env_values["DEFAULT_MODEL_PROFILE"]
+    if env_values.get("DEFAULT_WHISPER_MODEL") in whisper_model_map:
+        config.whisper_model = env_values["DEFAULT_WHISPER_MODEL"]
+    if env_values.get("CHATTERBOX_MODEL") in chatterbox_model_map:
+        config.chatterbox_model = env_values["CHATTERBOX_MODEL"]
     if env_values.get("PORT", "").isdigit():
         config.port = int(env_values["PORT"])
     config.enable_api_key_auth = _env_bool(env_values.get("ENABLE_API_KEY_AUTH"))
@@ -133,6 +196,10 @@ def load_previous_config(repo_root: Path, model_map: dict[str, str]) -> InstallC
     config.models = [alias for alias in config.models if isinstance(alias, str) and alias in model_map] or list(model_map)
     if config.default_profile not in model_map:
         config.default_profile = next(iter(model_map))
+    if config.whisper_model not in whisper_model_map:
+        config.whisper_model = "none"
+    if config.chatterbox_model not in chatterbox_model_map:
+        config.chatterbox_model = "chatterbox"
     try:
         config.port = int(config.port)
     except (TypeError, ValueError):
@@ -154,9 +221,17 @@ def selected_model_tags(model_map: dict[str, str], aliases: list[str]) -> list[s
     return tags
 
 
-def validate_config(config: InstallConfig, model_map: dict[str, str], system: str | None = None) -> list[str]:
+def validate_config(
+    config: InstallConfig,
+    model_map: dict[str, str],
+    system: str | None = None,
+    whisper_model_map: dict[str, str | None] | None = None,
+    chatterbox_model_map: dict[str, str] | None = None,
+) -> list[str]:
     errors: list[str] = []
     selected = set(config.models)
+    whisper_model_map = whisper_model_map or FALLBACK_WHISPER_MODEL_MAP
+    chatterbox_model_map = chatterbox_model_map or FALLBACK_CHATTERBOX_MODEL_MAP
 
     if not selected:
         errors.append("Choose at least one model to install.")
@@ -193,6 +268,10 @@ def validate_config(config: InstallConfig, model_map: dict[str, str], system: st
     else:
         if every_hours not in EVERY_HOURS_CHOICES:
             errors.append("Every-hours interval must divide evenly into 24.")
+    if config.whisper_model not in whisper_model_map:
+        errors.append("Choose a valid Whisper model or none.")
+    if config.chatterbox_model not in chatterbox_model_map:
+        errors.append("Choose a valid Chatterbox model.")
     if config.enable_api_key_auth:
         if not config.api_key.strip():
             errors.append("API-key auth requires a non-empty API key.")
@@ -202,19 +281,34 @@ def validate_config(config: InstallConfig, model_map: dict[str, str], system: st
     return errors
 
 
-def ensure_valid_config(config: InstallConfig, model_map: dict[str, str], system: str | None = None) -> None:
-    errors = validate_config(config, model_map, system)
+def ensure_valid_config(
+    config: InstallConfig,
+    model_map: dict[str, str],
+    system: str | None = None,
+    whisper_model_map: dict[str, str | None] | None = None,
+    chatterbox_model_map: dict[str, str] | None = None,
+) -> None:
+    errors = validate_config(config, model_map, system, whisper_model_map, chatterbox_model_map)
     if errors:
         raise ValueError("\n".join(errors))
 
 
-def build_env_updates(config: InstallConfig, model_map: dict[str, str]) -> dict[str, str]:
-    ensure_valid_config(config, model_map)
+def build_env_updates(
+    config: InstallConfig,
+    model_map: dict[str, str],
+    whisper_model_map: dict[str, str | None] | None = None,
+    chatterbox_model_map: dict[str, str] | None = None,
+) -> dict[str, str]:
+    ensure_valid_config(config, model_map, whisper_model_map=whisper_model_map, chatterbox_model_map=chatterbox_model_map)
     return {
         "OLLAMA_BASE_URL": "http://127.0.0.1:11434",
         "HOST": "127.0.0.1",
         "PORT": str(config.port),
         "DEFAULT_MODEL_PROFILE": config.default_profile,
+        "DEFAULT_WHISPER_MODEL": config.whisper_model,
+        "WHISPER_DEVICE": "auto",
+        "CHATTERBOX_MODEL": config.chatterbox_model,
+        "CHATTERBOX_DEVICE": "auto",
         "OLLAMA_MODELS": " ".join(selected_model_tags(model_map, config.models)),
         "ENABLE_ARBITRARY_MODELS": "false",
         "ENABLE_API_KEY_AUTH": "true" if config.enable_api_key_auth else "false",
@@ -247,11 +341,23 @@ def render_env_file(existing: str, updates: dict[str, str]) -> str:
     return "\n".join(rendered).rstrip() + "\n"
 
 
-def write_env_file(repo_root: Path, config: InstallConfig, model_map: dict[str, str]) -> Path:
+def write_env_file(
+    repo_root: Path,
+    config: InstallConfig,
+    model_map: dict[str, str],
+    whisper_model_map: dict[str, str | None] | None = None,
+    chatterbox_model_map: dict[str, str] | None = None,
+) -> Path:
     env_path = repo_root / ".env"
     source_path = env_path if env_path.exists() else repo_root / ".env.example"
     existing = source_path.read_text(encoding="utf-8") if source_path.exists() else ""
-    env_path.write_text(render_env_file(existing, build_env_updates(config, model_map)), encoding="utf-8")
+    env_path.write_text(
+        render_env_file(
+            existing,
+            build_env_updates(config, model_map, whisper_model_map, chatterbox_model_map),
+        ),
+        encoding="utf-8",
+    )
     return env_path
 
 
@@ -347,8 +453,10 @@ def run_process(command: list[str], cwd: Path, log: LogFn) -> None:
 
 def install_or_update(repo_root: Path, config: InstallConfig, log: LogFn) -> None:
     model_map = read_model_map(repo_root)
-    ensure_valid_config(config, model_map)
-    env_path = write_env_file(repo_root, config, model_map)
+    whisper_model_map = read_whisper_model_map(repo_root)
+    chatterbox_model_map = read_chatterbox_model_map(repo_root)
+    ensure_valid_config(config, model_map, whisper_model_map=whisper_model_map, chatterbox_model_map=chatterbox_model_map)
+    env_path = write_env_file(repo_root, config, model_map, whisper_model_map, chatterbox_model_map)
     state_path = save_gui_state(repo_root, config)
     log(f"Wrote {env_path}")
     log(f"Wrote {state_path}")
@@ -364,7 +472,9 @@ def run_gui() -> None:
     from tkinter.scrolledtext import ScrolledText
 
     model_map = read_model_map(REPO_ROOT)
-    initial_config = load_previous_config(REPO_ROOT, model_map)
+    whisper_model_map = read_whisper_model_map(REPO_ROOT)
+    chatterbox_model_map = read_chatterbox_model_map(REPO_ROOT)
+    initial_config = load_previous_config(REPO_ROOT, model_map, whisper_model_map, chatterbox_model_map)
 
     class InstallerApp(ttk.Frame):
         def __init__(self, master: Any) -> None:
@@ -380,6 +490,7 @@ def run_gui() -> None:
             self.sync_repo_var = tk.BooleanVar(value=initial_config.sync_repo)
             self.auth_var = tk.BooleanVar(value=initial_config.enable_api_key_auth)
             self.api_key_var = tk.StringVar(value=initial_config.api_key)
+            self.whisper_model_var = tk.StringVar(value=initial_config.whisper_model)
             schedule_label = SCHEDULE_LABELS.get(initial_config.update_schedule, SCHEDULE_LABELS["default"])
             self.schedule_var = tk.StringVar(value=schedule_label)
             self.update_time_var = tk.StringVar(value=initial_config.update_time)
@@ -425,8 +536,24 @@ def run_gui() -> None:
             default_combo.grid(row=1, column=1, sticky="w")
             default_combo.bind("<<ComboboxSelected>>", self._select_default_model)
 
+            speech_frame = ttk.LabelFrame(self, text="Speech", padding=10)
+            speech_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+            speech_frame.columnconfigure(1, weight=1)
+            ttk.Label(speech_frame, text="Whisper transcription").grid(row=0, column=0, sticky="w", pady=2)
+            ttk.Combobox(
+                speech_frame,
+                textvariable=self.whisper_model_var,
+                values=tuple(whisper_model_map),
+                state="readonly",
+                width=18,
+            ).grid(row=0, column=1, sticky="w", pady=2)
+            ttk.Label(
+                speech_frame,
+                text="Choose none to disable speech-to-text; Chatterbox TTS is enabled by default.",
+            ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
             gateway_frame = ttk.LabelFrame(self, text="Gateway and setup", padding=10)
-            gateway_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+            gateway_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
             gateway_frame.columnconfigure(1, weight=1)
             ttk.Label(gateway_frame, text="Gateway port").grid(row=0, column=0, sticky="w", pady=2)
             ttk.Label(gateway_frame, text="8080 (fixed for Docker and Tailscale Serve)").grid(
@@ -464,7 +591,7 @@ def run_gui() -> None:
             )
 
             schedule_frame = ttk.LabelFrame(self, text="Repository auto-updates", padding=10)
-            schedule_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+            schedule_frame.grid(row=4, column=0, sticky="ew", pady=(0, 10))
             schedule_frame.columnconfigure(1, weight=1)
             schedule_values = tuple(SCHEDULE_LABELS[key] for key in SCHEDULE_ORDER)
             ttk.Label(schedule_frame, text="Schedule").grid(row=0, column=0, sticky="w", pady=2)
@@ -498,7 +625,7 @@ def run_gui() -> None:
             ttk.Label(schedule_frame, text="hours").grid(row=3, column=1, sticky="w", padx=(72, 0), pady=2)
 
             button_frame = ttk.Frame(self)
-            button_frame.grid(row=4, column=0, sticky="ew", pady=(0, 10))
+            button_frame.grid(row=5, column=0, sticky="ew", pady=(0, 10))
             button_frame.columnconfigure(0, weight=1)
             self.save_button = ttk.Button(button_frame, text="Save settings", command=self._save_settings)
             self.save_button.grid(row=0, column=1, padx=(0, 8))
@@ -506,10 +633,10 @@ def run_gui() -> None:
             self.install_button.grid(row=0, column=2)
 
             log_frame = ttk.LabelFrame(self, text="Installer log", padding=8)
-            log_frame.grid(row=5, column=0, sticky="nsew")
+            log_frame.grid(row=6, column=0, sticky="nsew")
             log_frame.rowconfigure(0, weight=1)
             log_frame.columnconfigure(0, weight=1)
-            self.rowconfigure(5, weight=1)
+            self.rowconfigure(6, weight=1)
             self.log_text = ScrolledText(log_frame, height=15, wrap="word")
             self.log_text.grid(row=0, column=0, sticky="nsew")
             self._append_log("Ready.")
@@ -539,6 +666,8 @@ def run_gui() -> None:
                 update_time=self.update_time_var.get().strip(),
                 weekly_day=self.weekly_day_var.get(),
                 every_hours=every_hours,
+                whisper_model=self.whisper_model_var.get(),
+                chatterbox_model=initial_config.chatterbox_model,
                 enable_api_key_auth=self.auth_var.get(),
                 api_key=self.api_key_var.get().strip(),
             )
@@ -546,8 +675,13 @@ def run_gui() -> None:
         def _save_settings(self) -> None:
             try:
                 config = self._collect_config()
-                ensure_valid_config(config, model_map)
-                env_path = write_env_file(REPO_ROOT, config, model_map)
+                ensure_valid_config(
+                    config,
+                    model_map,
+                    whisper_model_map=whisper_model_map,
+                    chatterbox_model_map=chatterbox_model_map,
+                )
+                env_path = write_env_file(REPO_ROOT, config, model_map, whisper_model_map, chatterbox_model_map)
                 state_path = save_gui_state(REPO_ROOT, config)
             except Exception as exc:
                 messagebox.showerror("Invalid settings", str(exc))
@@ -559,7 +693,12 @@ def run_gui() -> None:
         def _start_install(self) -> None:
             try:
                 config = self._collect_config()
-                ensure_valid_config(config, model_map)
+                ensure_valid_config(
+                    config,
+                    model_map,
+                    whisper_model_map=whisper_model_map,
+                    chatterbox_model_map=chatterbox_model_map,
+                )
             except Exception as exc:
                 messagebox.showerror("Invalid settings", str(exc))
                 return

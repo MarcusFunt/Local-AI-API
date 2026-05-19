@@ -61,3 +61,16 @@ class ChatCompletionChunk(BaseModel):
     created: int
     model: str
     choices: list[ChatCompletionChunkChoice]
+
+
+class AudioSpeechRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    model: str | None = None
+    input: str
+    voice: str | None = None
+    response_format: str = "wav"
+    speed: float | None = None
+    language: str | None = None
+    exaggeration: float | None = None
+    cfg_weight: float | None = None

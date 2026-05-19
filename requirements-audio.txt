@@ -1,0 +1,6 @@
+-r requirements.txt
+
+# Local speech models. These packages pull PyTorch and model-runtime
+# dependencies, so they are kept separate from the lightweight gateway runtime.
+openai-whisper==20250625
+chatterbox-tts==0.1.7

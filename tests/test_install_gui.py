@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from gateway.normalize import MODEL_MAP
+from gateway.normalize import CHATTERBOX_MODEL_MAP, MODEL_MAP, WHISPER_MODEL_MAP
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +34,11 @@ def test_gui_model_map_matches_gateway_aliases(installer):
     assert installer.read_model_map(REPO_ROOT) == MODEL_MAP
 
 
+def test_gui_audio_model_maps_match_gateway_aliases(installer):
+    assert installer.read_whisper_model_map(REPO_ROOT) == WHISPER_MODEL_MAP
+    assert installer.read_chatterbox_model_map(REPO_ROOT) == CHATTERBOX_MODEL_MAP
+
+
 def test_env_updates_keep_ollama_private_and_select_models(installer):
     config = installer.InstallConfig(
         models=["small", "dev"],
@@ -47,6 +52,32 @@ def test_env_updates_keep_ollama_private_and_select_models(installer):
     assert updates["HOST"] == "127.0.0.1"
     assert updates["ENABLE_ARBITRARY_MODELS"] == "false"
     assert updates["OLLAMA_MODELS"] == "qwen3.5:4b qwen3.5:0.8b"
+    assert updates["DEFAULT_WHISPER_MODEL"] == "none"
+    assert updates["CHATTERBOX_MODEL"] == "chatterbox"
+
+
+def test_env_updates_can_select_whisper_model(installer):
+    config = installer.InstallConfig(
+        models=["dev"],
+        default_profile="dev",
+        whisper_model="base",
+    )
+
+    updates = installer.build_env_updates(config, MODEL_MAP, WHISPER_MODEL_MAP, CHATTERBOX_MODEL_MAP)
+
+    assert updates["DEFAULT_WHISPER_MODEL"] == "base"
+
+
+def test_gui_rejects_unknown_whisper_model(installer):
+    config = installer.InstallConfig(
+        models=["dev"],
+        default_profile="dev",
+        whisper_model="large",
+    )
+
+    errors = installer.validate_config(config, MODEL_MAP, whisper_model_map=WHISPER_MODEL_MAP)
+
+    assert any("Whisper" in error for error in errors)
 
 
 def test_gui_rejects_gateway_port_reserved_for_ollama(installer):
