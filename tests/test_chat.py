@@ -83,6 +83,26 @@ class TestNonStreamingChatCompletion:
 
         assert captured[0]["model"] == "qwen3.5:4b"
 
+    async def test_dev_alias_sends_development_model_to_ollama(
+        self, client: httpx.AsyncClient
+    ):
+        captured: list[dict] = []
+
+        async def capture(request: httpx.Request, *args, **kwargs):
+            captured.append(json.loads(request.content))
+            return httpx.Response(
+                200, json={**OLLAMA_SUCCESS, "model": "qwen3.5:0.8b"}
+            )
+
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(side_effect=capture)
+            await client.post(
+                "/v1/chat/completions",
+                json={"model": "dev", "messages": [{"role": "user", "content": "hi"}]},
+            )
+
+        assert captured[0]["model"] == "qwen3.5:0.8b"
+
     async def test_omitted_model_uses_default_profile(self, client: httpx.AsyncClient):
         captured: list[dict] = []
 

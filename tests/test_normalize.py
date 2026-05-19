@@ -31,6 +31,9 @@ class TestAliasMapping:
     def test_small_resolves_to_small_model(self):
         assert resolve_model("small", _settings()) == "qwen3.5:4b"
 
+    def test_dev_resolves_to_development_model(self):
+        assert resolve_model("dev", _settings()) == "qwen3.5:0.8b"
+
     def test_all_aliases_covered(self):
         """Every key in MODEL_MAP must resolve without error."""
         s = _settings()
@@ -44,6 +47,9 @@ class TestDirectModelTags:
 
     def test_direct_small_tag_accepted(self):
         assert resolve_model("qwen3.5:4b", _settings()) == "qwen3.5:4b"
+
+    def test_direct_development_tag_accepted(self):
+        assert resolve_model("qwen3.5:0.8b", _settings()) == "qwen3.5:0.8b"
 
 
 class TestArbitraryGating:

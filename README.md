@@ -7,7 +7,7 @@ A private, lightweight OpenAI-compatible gateway for [Ollama](https://ollama.com
 ## What this gateway does
 
 - Accepts `POST /v1/chat/completions` requests in OpenAI format
-- Normalises model aliases (`main` → `qwen3.5:9b`, `small` → `qwen3.5:4b`)
+- Normalises model aliases (`main` → `qwen3.5:9b`, `small` → `qwen3.5:4b`, `dev` → `qwen3.5:0.8b`)
 - Proxies requests to Ollama running on `127.0.0.1:11434`
 - Translates Ollama's response format back to the OpenAI envelope
 - Supports both streaming (`stream: true`) and non-streaming responses
@@ -60,7 +60,7 @@ The script:
 - keeps raw Ollama private on `127.0.0.1:11434` inside Docker and publishes only `127.0.0.1:8080`
 - auto-selects NVIDIA, AMD/ROCm, or CPU compose overrides
 - builds the gateway image and runs `python -m pytest tests -v` inside it before restarting the live gateway
-- pulls `qwen3.5:9b` and `qwen3.5:4b`
+- pulls `qwen3.5:9b`, `qwen3.5:4b`, and `qwen3.5:0.8b`
 - installs Tailscale if needed, runs `tailscale up` interactively when unauthenticated, and configures `tailscale serve --bg http://127.0.0.1:8080`
 - installs a systemd timer that runs on boot and daily using the same script
 
@@ -80,6 +80,46 @@ To run a manual update later:
 
 ```bash
 ./scripts/install-or-update.sh
+```
+
+## Automated Docker deployment on Windows
+
+For a Windows host, use the PowerShell Docker installer. It expects Docker Desktop to be installed and able to run Linux containers.
+
+```powershell
+git clone https://github.com/MarcusFunt/Local-AI-API.git
+cd Local-AI-API
+powershell -ExecutionPolicy Bypass -File .\scripts\install-or-update.ps1
+```
+
+The Windows script:
+
+- fetches `origin/main`, hard-resets tracked files to GitHub, and cleans untracked files while preserving runtime env files such as `.env`
+- starts Docker Desktop if it is installed but not already running
+- runs Ollama in Docker with the gateway sharing Ollama's network namespace
+- keeps raw Ollama private on `127.0.0.1:11434` inside Docker and publishes only `127.0.0.1:8080`
+- auto-selects NVIDIA when Docker GPU access works, otherwise uses the CPU compose override
+- builds the gateway image and runs `python -m pytest tests -v` inside it before restarting the live gateway
+- pulls `qwen3.5:9b`, `qwen3.5:4b`, and `qwen3.5:0.8b`
+- configures `tailscale serve --bg http://127.0.0.1:8080` when Tailscale is installed and authenticated
+- installs a per-user Scheduled Task that runs at logon and daily using the same script
+
+AMD/ROCm Docker acceleration is Linux-only in this project; Windows hosts use CPU unless NVIDIA Docker GPU access is available.
+
+Useful verification commands after install:
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:8080/health -UseBasicParsing
+Invoke-WebRequest http://127.0.0.1:8080/health/ollama -UseBasicParsing
+docker ps --format "table {{.Names}}\t{{.Ports}}"
+Get-ScheduledTask -TaskName "Local AI API Update"
+tailscale serve status
+```
+
+To run a manual update later:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-or-update.ps1
 ```
 
 ---
@@ -106,11 +146,12 @@ Start Ollama (it binds to `127.0.0.1:11434` by default — leave it that way):
 ollama serve
 ```
 
-Pull the two supported models:
+Pull the three supported models:
 
 ```bash
 ollama pull qwen3.5:9b
 ollama pull qwen3.5:4b
+ollama pull qwen3.5:0.8b
 ```
 
 Verify they are available:
@@ -218,7 +259,7 @@ Set the agent's OpenAI base URL to your Tailscale Serve URL (or `http://127.0.0.
 
 ```
 base_url = "https://my-machine.tail12345.ts.net/v1"
-model    = "main"      # or "small", "qwen3.5:9b", "qwen3.5:4b"
+model    = "main"      # or "small", "dev", "qwen3.5:9b", "qwen3.5:4b", "qwen3.5:0.8b"
 api_key  = "unused"    # required by most clients; the gateway ignores it by default
 ```
 
@@ -292,12 +333,16 @@ Docker-only variables used by `compose.yaml`:
 
 ### Supported model values
 
+The `dev` profile is intended for faster local development and uses [Qwen/Qwen3.5-0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B) through Ollama's `qwen3.5:0.8b` tag.
+
 | Client sends | Gateway forwards |
 |---|---|
 | `main` | `qwen3.5:9b` |
 | `small` | `qwen3.5:4b` |
+| `dev` | `qwen3.5:0.8b` |
 | `qwen3.5:9b` | `qwen3.5:9b` |
 | `qwen3.5:4b` | `qwen3.5:4b` |
+| `qwen3.5:0.8b` | `qwen3.5:0.8b` |
 | anything else | HTTP 422 (unless `ENABLE_ARBITRARY_MODELS=true`) |
 
 ---

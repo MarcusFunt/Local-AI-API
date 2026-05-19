@@ -16,7 +16,7 @@ A private, local HTTP gateway that sits between [Tailscale Serve](https://tailsc
 - **Never expose raw Ollama to the network.** The gateway is the only thing that talks to Ollama.
 - **Tailscale Serve is the access-control layer.** No public internet endpoint. No router port-forwarding.
 - **No API-key auth by default.** `ENABLE_API_KEY_AUTH=false` is correct. Optional bearer-token auth exists only as a disabled-by-default extra layer.
-- **No arbitrary model names by default.** `ENABLE_ARBITRARY_MODELS=false`. Only `main` and `small` aliases (and their resolved tags) are accepted unless explicitly unlocked.
+- **No arbitrary model names by default.** `ENABLE_ARBITRARY_MODELS=false`. Only `main`, `small`, and `dev` aliases (and their resolved tags) are accepted unless explicitly unlocked.
 
 ---
 
@@ -26,8 +26,9 @@ A private, local HTTP gateway that sits between [Tailscale Serve](https://tailsc
 |-------|-------------|
 | `main` | `qwen3.5:9b` |
 | `small` | `qwen3.5:4b` |
+| `dev` | `qwen3.5:0.8b` |
 
-Direct model tags (`qwen3.5:9b`, `qwen3.5:4b`) are also accepted. Everything else is rejected with HTTP 422 unless `ENABLE_ARBITRARY_MODELS=true`.
+Direct model tags (`qwen3.5:9b`, `qwen3.5:4b`, `qwen3.5:0.8b`) are also accepted. Everything else is rejected with HTTP 422 unless `ENABLE_ARBITRARY_MODELS=true`.
 
 The mapping lives in `gateway/normalize.py`. Update it there if you add new profiles.
 
@@ -82,6 +83,7 @@ ollama serve
 # 4. Pull the models
 ollama pull qwen3.5:9b
 ollama pull qwen3.5:4b
+ollama pull qwen3.5:0.8b
 
 # 5. Run the gateway
 uvicorn gateway.main:app --host 127.0.0.1 --port 8080

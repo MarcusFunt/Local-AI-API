@@ -1,4 +1,4 @@
-"""Deployment-level checks for the Docker and Linux installer assets."""
+"""Deployment-level checks for the Docker installer assets."""
 from __future__ import annotations
 
 import json
@@ -69,6 +69,7 @@ def test_gateway_keeps_ollama_loopback_and_shared_namespace(files: list[str]):
     assert model_init["entrypoint"][:2] == ["/bin/sh", "-c"]
     assert "ollama pull qwen3.5:9b" in model_init["entrypoint"][2]
     assert "ollama pull qwen3.5:4b" in model_init["entrypoint"][2]
+    assert "ollama pull qwen3.5:0.8b" in model_init["entrypoint"][2]
     assert ollama["environment"]["OLLAMA_HOST"] == "127.0.0.1:11434"
 
 
@@ -98,6 +99,30 @@ def test_install_or_update_script_has_valid_bash_syntax():
 
     result = subprocess.run(
         [bash, "-n", "scripts/install-or-update.sh"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_windows_install_or_update_script_has_valid_powershell_syntax():
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is not installed")
+
+    parse_command = (
+        "$tokens = $null; "
+        "$errors = $null; "
+        "[System.Management.Automation.Language.Parser]::ParseFile("
+        "'scripts/install-or-update.ps1', [ref]$tokens, [ref]$errors) | Out-Null; "
+        "if ($errors.Count -gt 0) { "
+        "$errors | ForEach-Object { Write-Error $_.Message }; "
+        "exit 1 "
+        "}"
+    )
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-NonInteractive", "-Command", parse_command],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,

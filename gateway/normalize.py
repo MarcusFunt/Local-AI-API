@@ -5,6 +5,7 @@ from .config import Settings
 MODEL_MAP: dict[str, str] = {
     "main": "qwen3.5:9b",
     "small": "qwen3.5:4b",
+    "dev": "qwen3.5:0.8b",
 }
 
 # Direct model tags that are always accepted (same values as map targets)
