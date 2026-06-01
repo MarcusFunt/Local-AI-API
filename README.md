@@ -95,6 +95,21 @@ To run a manual update later:
 ./scripts/install-or-update.sh
 ```
 
+## Ubuntu 26.04 server bootstrap
+
+For an Ubuntu 26.04 bare-metal AI server with NVIDIA acceleration, Tailscale
+Serve, host hardening, agent containers, and config/work backups, use the
+server bootstrap guide:
+
+```bash
+git clone https://github.com/MarcusFunt/Local-AI-API.git /opt/local-ai-api
+cd /opt/local-ai-api
+bash scripts/bootstrap-ubuntu26-ai-server.sh
+```
+
+See [`docs/ubuntu26-server.md`](docs/ubuntu26-server.md) for the full operating
+plan, verification commands, agent-container launcher, and backup workflow.
+
 ## Automated Docker deployment on Windows
 
 For a Windows host, use the PowerShell Docker installer. It expects Docker Desktop to be installed and able to run Linux containers.

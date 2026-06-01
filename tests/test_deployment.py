@@ -16,6 +16,14 @@ COMPOSE_VARIANTS = {
     "nvidia": ["compose.yaml", "compose.gpu-nvidia.yaml"],
     "amd": ["compose.yaml", "compose.gpu-amd.yaml"],
 }
+SHELL_SCRIPTS = [
+    "scripts/install-or-update.sh",
+    "scripts/bootstrap-ubuntu26-ai-server.sh",
+    "scripts/setup-agent-runtime.sh",
+    "scripts/run-agent-container.sh",
+    "scripts/backup-server-state.sh",
+    "scripts/verify-server-plan.sh",
+]
 
 
 def _compose_config(files: list[str]) -> dict:
@@ -97,13 +105,14 @@ def test_only_gateway_port_is_published_on_loopback(files: list[str]):
     assert published_ports == [("ollama", "127.0.0.1", "8080", 8080)]
 
 
-def test_install_or_update_script_has_valid_bash_syntax():
+@pytest.mark.parametrize("script", SHELL_SCRIPTS)
+def test_shell_script_has_valid_bash_syntax(script: str):
     bash = shutil.which("bash")
     if bash is None:
         pytest.skip("bash is not installed")
 
     result = subprocess.run(
-        [bash, "-n", "scripts/install-or-update.sh"],
+        [bash, "-n", script],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
