@@ -124,3 +124,26 @@ class TestStatusCheck:
         assert body["status"] == "passed"
         assert body["model_alias"] == "dev"
         assert body["model"] == "qwen3.5:0.8b"
+
+    async def test_dev_check_fails_on_non_exact_response(self, client: httpx.AsyncClient):
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "model": "qwen3.5:0.8b",
+                        "created_at": "2026-05-19T08:00:00Z",
+                        "message": {"role": "assistant", "content": "okay"},
+                        "done": True,
+                        "prompt_eval_count": 7,
+                        "eval_count": 1,
+                    },
+                )
+            )
+            resp = await client.post("/status/check")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "failed"
+        assert body["response"] == "okay"
+        assert body["error"] == "Dev model check expected exactly 'ok'."

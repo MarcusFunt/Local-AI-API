@@ -178,7 +178,7 @@ class TestNonStreamingChatCompletion:
             json={
                 "model": "main",
                 "messages": [{"role": "user", "content": "hi"}],
-                "tools": [],
+                "logprobs": True,
             },
         )
         assert resp.status_code == 422
@@ -226,6 +226,195 @@ class TestNonStreamingChatCompletion:
         assert options["num_predict"] == 512
         assert options["stop"] == ["END"]
         assert options["seed"] == 1234
+
+    async def test_max_completion_tokens_forwarded_as_num_predict(
+        self, client: httpx.AsyncClient
+    ):
+        captured: list[dict] = []
+
+        async def capture(request: httpx.Request, *args, **kwargs):
+            captured.append(json.loads(request.content))
+            return httpx.Response(200, json=OLLAMA_SUCCESS)
+
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(side_effect=capture)
+            await client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "main",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_completion_tokens": 32,
+                },
+            )
+
+        assert captured[0]["options"]["num_predict"] == 32
+
+    async def test_content_parts_are_normalized_for_ollama(
+        self, client: httpx.AsyncClient
+    ):
+        captured: list[dict] = []
+
+        async def capture(request: httpx.Request, *args, **kwargs):
+            captured.append(json.loads(request.content))
+            return httpx.Response(200, json=OLLAMA_SUCCESS)
+
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(side_effect=capture)
+            resp = await client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "main",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "hello"},
+                                {"type": "text", "text": "world"},
+                            ],
+                        }
+                    ],
+                },
+            )
+
+        assert resp.status_code == 200
+        assert captured[0]["messages"][0]["content"] == "hello\nworld"
+
+    async def test_data_url_image_parts_are_forwarded_to_ollama(
+        self, client: httpx.AsyncClient
+    ):
+        captured: list[dict] = []
+
+        async def capture(request: httpx.Request, *args, **kwargs):
+            captured.append(json.loads(request.content))
+            return httpx.Response(200, json=OLLAMA_SUCCESS)
+
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(side_effect=capture)
+            resp = await client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "main",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "describe"},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": "data:image/png;base64,aW1hZ2U="
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
+
+        assert resp.status_code == 200
+        assert captured[0]["messages"][0]["content"] == "describe"
+        assert captured[0]["messages"][0]["images"] == ["aW1hZ2U="]
+
+    async def test_tools_and_json_response_format_are_forwarded(
+        self, client: httpx.AsyncClient
+    ):
+        captured: list[dict] = []
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+        async def capture(request: httpx.Request, *args, **kwargs):
+            captured.append(json.loads(request.content))
+            return httpx.Response(200, json=OLLAMA_SUCCESS)
+
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(side_effect=capture)
+            resp = await client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "main",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "tools": tools,
+                    "response_format": {"type": "json_object"},
+                },
+            )
+
+        assert resp.status_code == 200
+        assert captured[0]["tools"] == tools
+        assert captured[0]["format"] == "json"
+
+    async def test_tool_choice_none_suppresses_tools(self, client: httpx.AsyncClient):
+        captured: list[dict] = []
+
+        async def capture(request: httpx.Request, *args, **kwargs):
+            captured.append(json.loads(request.content))
+            return httpx.Response(200, json=OLLAMA_SUCCESS)
+
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(side_effect=capture)
+            resp = await client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "main",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "tools": [{"type": "function", "function": {"name": "lookup"}}],
+                    "tool_choice": "none",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert "tools" not in captured[0]
+
+    async def test_multiple_choices_are_rejected(self, client: httpx.AsyncClient):
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "main",
+                "messages": [{"role": "user", "content": "hi"}],
+                "n": 2,
+            },
+        )
+
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "invalid_request"
+
+    async def test_assistant_tool_calls_round_trip_in_response(
+        self, client: httpx.AsyncClient
+    ):
+        tool_calls = [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "lookup", "arguments": "{}"},
+            }
+        ]
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        **OLLAMA_SUCCESS,
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": tool_calls,
+                        },
+                    },
+                )
+            )
+            resp = await client.post(
+                "/v1/chat/completions",
+                json={"model": "main", "messages": [{"role": "user", "content": "hi"}]},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["choices"][0]["message"]["tool_calls"] == tool_calls
 
     async def test_unknown_model_returns_422(self, client: httpx.AsyncClient):
         resp = await client.post(
@@ -502,6 +691,46 @@ class TestStreamingChatCompletion:
         ]
         stop_chunk = json.loads(data_lines[-1])
         assert stop_chunk["choices"][0]["finish_reason"] == "length"
+
+    async def test_streaming_include_usage_emits_usage_chunk(
+        self, client: httpx.AsyncClient
+    ):
+        chunks = [
+            {"model": "qwen3.5:9b", "message": {"role": "assistant", "content": "A"}, "done": False},
+            {
+                "model": "qwen3.5:9b",
+                "message": {"role": "assistant", "content": ""},
+                "done": True,
+                "prompt_eval_count": 11,
+                "eval_count": 4,
+            },
+        ]
+
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(
+                return_value=httpx.Response(200, content=_ndjson(*chunks))
+            )
+            resp = await client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "main",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                },
+            )
+
+        data_lines = [
+            l[6:] for l in resp.text.splitlines()
+            if l.startswith("data: ") and l != "data: [DONE]"
+        ]
+        usage_chunk = json.loads(data_lines[-1])
+        assert usage_chunk["choices"] == []
+        assert usage_chunk["usage"] == {
+            "prompt_tokens": 11,
+            "completion_tokens": 4,
+            "total_tokens": 15,
+        }
 
     async def test_streaming_connect_error_becomes_502(self, client: httpx.AsyncClient):
         with respx.mock(base_url=OLLAMA_BASE) as mock:

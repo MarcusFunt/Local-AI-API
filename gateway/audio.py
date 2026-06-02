@@ -10,6 +10,7 @@ import io
 import logging
 import tempfile
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from fastapi import HTTPException, UploadFile
@@ -18,8 +19,11 @@ from .config import Settings
 
 logger = logging.getLogger(__name__)
 
-_WHISPER_MODELS: dict[tuple[str, str], Any] = {}
+_WHISPER_MODELS: dict[tuple[str, str, str], Any] = {}
 _CHATTERBOX_MODELS: dict[tuple[str, str], Any] = {}
+_WHISPER_MODEL_LOCKS: dict[tuple[str, str, str], Lock] = {}
+_CHATTERBOX_MODEL_LOCKS: dict[tuple[str, str], Lock] = {}
+_MODEL_LOCKS_GUARD = Lock()
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
@@ -86,6 +90,15 @@ def _audio_suffix(filename: str | None) -> str:
     return suffix
 
 
+def _model_load_lock(locks: dict[Any, Lock], cache_key: Any) -> Lock:
+    with _MODEL_LOCKS_GUARD:
+        lock = locks.get(cache_key)
+        if lock is None:
+            lock = Lock()
+            locks[cache_key] = lock
+        return lock
+
+
 async def _read_upload_to_tempfile(file: UploadFile, max_bytes: int | None = None) -> Path:
     temp = tempfile.NamedTemporaryFile(delete=False, suffix=_audio_suffix(file.filename))
     temp_path = Path(temp.name)
@@ -131,9 +144,12 @@ def _load_whisper_model(model_name: str, device: str, download_root: str | None 
     cache_key = (model_name, device, download_root or "")
     model = _WHISPER_MODELS.get(cache_key)
     if model is None:
-        logger.info("Loading Whisper model (model=%s device=%s)", model_name, device)
-        model = whisper.load_model(model_name, device=device, download_root=download_root)
-        _WHISPER_MODELS[cache_key] = model
+        with _model_load_lock(_WHISPER_MODEL_LOCKS, cache_key):
+            model = _WHISPER_MODELS.get(cache_key)
+            if model is None:
+                logger.info("Loading Whisper model (model=%s device=%s)", model_name, device)
+                model = whisper.load_model(model_name, device=device, download_root=download_root)
+                _WHISPER_MODELS[cache_key] = model
     return model
 
 
@@ -180,22 +196,27 @@ def _load_chatterbox_model(resolved_model: str, device: str) -> Any:
     if model is not None:
         return model
 
-    try:
-        if resolved_model == "chatterbox-multilingual":
-            from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+    with _model_load_lock(_CHATTERBOX_MODEL_LOCKS, cache_key):
+        model = _CHATTERBOX_MODELS.get(cache_key)
+        if model is not None:
+            return model
 
-            logger.info("Loading Chatterbox multilingual model (device=%s)", device)
-            model = ChatterboxMultilingualTTS.from_pretrained(device=device)
-        else:
-            from chatterbox.tts import ChatterboxTTS
+        try:
+            if resolved_model == "chatterbox-multilingual":
+                from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
-            logger.info("Loading Chatterbox model (device=%s)", device)
-            model = ChatterboxTTS.from_pretrained(device=device)
-    except ImportError as exc:
-        raise _missing_dependency_exception("Chatterbox text-to-speech", "chatterbox-tts") from exc
+                logger.info("Loading Chatterbox multilingual model (device=%s)", device)
+                model = ChatterboxMultilingualTTS.from_pretrained(device=device)
+            else:
+                from chatterbox.tts import ChatterboxTTS
 
-    _CHATTERBOX_MODELS[cache_key] = model
-    return model
+                logger.info("Loading Chatterbox model (device=%s)", device)
+                model = ChatterboxTTS.from_pretrained(device=device)
+        except ImportError as exc:
+            raise _missing_dependency_exception("Chatterbox text-to-speech", "chatterbox-tts") from exc
+
+        _CHATTERBOX_MODELS[cache_key] = model
+        return model
 
 
 def _wav_bytes_from_tensor(wav: Any, sample_rate: int) -> bytes:

@@ -373,6 +373,26 @@ curl http://localhost:8080/v1/chat/completions \
 
 ---
 
+## Chat compatibility notes
+
+The chat endpoint accepts the core OpenAI chat-completions request shape plus a
+small set of compatibility fields commonly sent by coding agents:
+
+- text messages and OpenAI content-part lists, including text parts and base64
+  `data:` image URLs
+- `max_tokens` or `max_completion_tokens`, forwarded to Ollama as
+  `num_predict`
+- `tools` and `tool_choice`; `tool_choice: "none"` suppresses tool forwarding
+- `response_format` with `text`, `json_object`, or `json_schema`
+- `stream_options.include_usage`, which emits a final usage chunk before
+  `[DONE]`
+
+The gateway still supports only one completion per request. Requests with
+`n > 1` return HTTP 422 instead of silently returning fewer choices than the
+client requested.
+
+---
+
 ## Exposing the gateway privately with Tailscale Serve
 
 Tailscale Serve makes the gateway available to your tailnet devices over HTTPS — no public internet exposure, no router configuration needed.

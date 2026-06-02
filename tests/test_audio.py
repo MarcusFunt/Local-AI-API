@@ -1,7 +1,11 @@
 """Tests for OpenAI-style local audio endpoints."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import io
+import sys
+import time
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import HTTPException, UploadFile
@@ -256,3 +260,74 @@ class TestAudioUploadHelpers:
 
         assert exc_info.value.status_code == 413
         assert exc_info.value.detail["error"]["code"] == "request_too_large"
+
+
+class TestAudioModelLoading:
+    async def test_whisper_model_load_is_locked_per_cache_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        import gateway.audio as audio_module
+
+        audio_module._WHISPER_MODELS.clear()
+        audio_module._WHISPER_MODEL_LOCKS.clear()
+        calls = 0
+        loaded_model = object()
+
+        def fake_load_model(*args: Any, **kwargs: Any) -> object:
+            nonlocal calls
+            calls += 1
+            time.sleep(0.05)
+            return loaded_model
+
+        monkeypatch.setitem(
+            sys.modules,
+            "whisper",
+            SimpleNamespace(load_model=fake_load_model),
+        )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(
+                executor.map(
+                    lambda _: audio_module._load_whisper_model("tiny", "cpu"),
+                    range(2),
+                )
+            )
+
+        assert calls == 1
+        assert results == [loaded_model, loaded_model]
+
+    async def test_chatterbox_model_load_is_locked_per_cache_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        import gateway.audio as audio_module
+
+        audio_module._CHATTERBOX_MODELS.clear()
+        audio_module._CHATTERBOX_MODEL_LOCKS.clear()
+        calls = 0
+        loaded_model = object()
+
+        class FakeChatterboxTTS:
+            @classmethod
+            def from_pretrained(cls, *args: Any, **kwargs: Any) -> object:
+                nonlocal calls
+                calls += 1
+                time.sleep(0.05)
+                return loaded_model
+
+        monkeypatch.setitem(sys.modules, "chatterbox", SimpleNamespace())
+        monkeypatch.setitem(
+            sys.modules,
+            "chatterbox.tts",
+            SimpleNamespace(ChatterboxTTS=FakeChatterboxTTS),
+        )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(
+                executor.map(
+                    lambda _: audio_module._load_chatterbox_model("chatterbox", "cpu"),
+                    range(2),
+                )
+            )
+
+        assert calls == 1
+        assert results == [loaded_model, loaded_model]

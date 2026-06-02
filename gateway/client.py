@@ -50,6 +50,79 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
+def _image_data_from_url(value: Any) -> str | None:
+    if isinstance(value, dict):
+        url = value.get("url")
+    else:
+        url = value
+    if not isinstance(url, str):
+        return None
+    if url.startswith("data:") and ";base64," in url:
+        return url.split(",", 1)[1]
+    return None
+
+
+def _content_for_ollama(content: Any) -> tuple[str, list[str]]:
+    if content is None:
+        return "", []
+    if isinstance(content, str):
+        return content, []
+    if not isinstance(content, list):
+        return str(content), []
+
+    text_parts: list[str] = []
+    images: list[str] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        part_type = part.get("type")
+        if part_type == "text":
+            text_parts.append(str(part.get("text", "")))
+        elif part_type == "image_url":
+            image_data = _image_data_from_url(part.get("image_url"))
+            if image_data:
+                images.append(image_data)
+        elif isinstance(part.get("text"), str):
+            text_parts.append(part["text"])
+
+    return "\n".join(text for text in text_parts if text), images
+
+
+def _messages_for_ollama(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ollama_messages: list[dict[str, Any]] = []
+    for message in messages:
+        content, images = _content_for_ollama(message.get("content"))
+        ollama_message: dict[str, Any] = {
+            "role": message["role"],
+            "content": content,
+        }
+        if images:
+            ollama_message["images"] = images
+        for key in ("name", "tool_call_id", "tool_calls"):
+            if message.get(key) is not None:
+                ollama_message[key] = message[key]
+        ollama_messages.append(ollama_message)
+    return ollama_messages
+
+
+def _format_for_ollama(response_format: dict[str, Any] | None) -> str | dict[str, Any] | None:
+    if response_format is None:
+        return None
+    format_type = response_format.get("type")
+    if format_type == "json_object":
+        return "json"
+    if format_type == "json_schema":
+        json_schema = response_format.get("json_schema")
+        if isinstance(json_schema, dict) and isinstance(json_schema.get("schema"), dict):
+            return json_schema["schema"]
+        return "json"
+    return None
+
+
+def _stream_include_usage(stream_options: dict[str, Any] | None) -> bool:
+    return bool(stream_options and stream_options.get("include_usage"))
+
+
 def _build_ollama_body(
     resolved_model: str,
     request_dict: dict[str, Any],
@@ -57,10 +130,18 @@ def _build_ollama_body(
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": resolved_model,
-        "messages": request_dict["messages"],
+        "messages": _messages_for_ollama(request_dict["messages"]),
         "stream": stream,
         "think": False,
     }
+
+    tools = request_dict.get("tools")
+    if tools and request_dict.get("tool_choice") != "none":
+        body["tools"] = tools
+
+    response_format = _format_for_ollama(request_dict.get("response_format"))
+    if response_format is not None:
+        body["format"] = response_format
 
     options: dict[str, Any] = {}
     if request_dict.get("temperature") is not None:
@@ -181,6 +262,7 @@ async def proxy_non_streaming(
         logger.warning("Ollama returned invalid JSON: %s", exc)
         raise _ollama_invalid_response_exception("Ollama returned invalid JSON.") from exc
     msg = data.get("message", {})
+    msg = msg if isinstance(msg, dict) else {}
     prompt_tokens = data.get("prompt_eval_count", 0) or 0
     completion_tokens = data.get("eval_count", 0) or 0
 
@@ -193,7 +275,10 @@ async def proxy_non_streaming(
                 index=0,
                 message=ChatMessage(
                     role=msg.get("role", "assistant"),
-                    content=msg.get("content", ""),
+                    content=msg.get("content") or "",
+                    tool_calls=msg.get("tool_calls"),
+                    tool_call_id=msg.get("tool_call_id"),
+                    name=msg.get("name"),
                 ),
                 finish_reason=_finish_reason_from_ollama(data),
             )
@@ -233,6 +318,22 @@ async def proxy_streaming(
         )
         return f"data: {chunk.model_dump_json(exclude_none=True)}\n\n"
 
+    def _usage_chunk(data: dict[str, Any]) -> str:
+        prompt_tokens = data.get("prompt_eval_count", 0) or 0
+        completion_tokens = data.get("eval_count", 0) or 0
+        chunk = ChatCompletionChunk(
+            id=completion_id,
+            created=created,
+            model=resolved_model,
+            choices=[],
+            usage=ChatCompletionUsage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=prompt_tokens + completion_tokens,
+            ),
+        )
+        return f"data: {chunk.model_dump_json(exclude_none=True)}\n\n"
+
     def _error_event(message: str, code: str) -> str:
         payload = {
             "error": {
@@ -267,6 +368,7 @@ async def proxy_streaming(
             yield _chunk({"role": "assistant"}, finish_reason=None)
 
             completed = False
+            include_usage = _stream_include_usage(request_dict.get("stream_options"))
             async for raw_line in response.aiter_lines():
                 raw_line = raw_line.strip()
                 if not raw_line:
@@ -279,14 +381,25 @@ async def proxy_streaming(
                     continue
 
                 done = ollama_chunk.get("done", False)
-                content = ollama_chunk.get("message", {}).get("content", "")
+                message = ollama_chunk.get("message", {})
+                message = message if isinstance(message, dict) else {}
+                content = message.get("content", "")
+                tool_calls = message.get("tool_calls")
 
                 if completed:
                     continue
                 if not done:
-                    yield _chunk({"content": content}, finish_reason=None)
+                    delta: dict[str, Any] = {}
+                    if content:
+                        delta["content"] = content
+                    if tool_calls:
+                        delta["tool_calls"] = tool_calls
+                    if delta:
+                        yield _chunk(delta, finish_reason=None)
                 else:
                     yield _chunk({}, finish_reason=_finish_reason_from_ollama(ollama_chunk))
+                    if include_usage:
+                        yield _usage_chunk(ollama_chunk)
                     yield "data: [DONE]\n\n"
                     completed = True
 

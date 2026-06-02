@@ -1,15 +1,21 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _CHAT_ROLES = {"system", "user", "assistant", "tool", "developer"}
+_RESPONSE_FORMAT_TYPES = {"text", "json_object", "json_schema"}
 
 
 class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     role: str
-    content: str
+    content: str | list[dict[str, Any]] | None = None
+    name: str | None = None
+    tool_call_id: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
 
     @field_validator("role")
     @classmethod
@@ -19,6 +25,31 @@ class ChatMessage(BaseModel):
             allowed = ", ".join(sorted(_CHAT_ROLES))
             raise ValueError(f"Unsupported chat message role. Allowed roles: {allowed}.")
         return value
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(
+        cls, value: str | list[dict[str, Any]] | None
+    ) -> str | list[dict[str, Any]] | None:
+        if value is None or isinstance(value, str):
+            return value
+        if not value:
+            raise ValueError("Content part list must not be empty.")
+        for part in value:
+            part_type = part.get("type")
+            if not isinstance(part_type, str) or not part_type:
+                raise ValueError("Each content part must include a non-empty type.")
+            if part_type == "text" and not isinstance(part.get("text"), str):
+                raise ValueError("Text content parts must include text.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_message_payload(self) -> "ChatMessage":
+        if self.role != "assistant" and self.content is None:
+            raise ValueError("Non-assistant messages must include content.")
+        if self.role == "assistant" and self.content is None and not self.tool_calls:
+            raise ValueError("Assistant messages must include content or tool_calls.")
+        return self
 
 
 class ChatCompletionRequest(BaseModel):
@@ -30,8 +61,16 @@ class ChatCompletionRequest(BaseModel):
     temperature: float | None = Field(default=None, ge=0, le=2)
     top_p: float | None = Field(default=None, ge=0, le=1)
     max_tokens: int | None = Field(default=None, gt=0)
+    max_completion_tokens: int | None = Field(default=None, gt=0)
     stop: str | list[str] | None = None
     seed: int | None = None
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: str | dict[str, Any] | None = None
+    parallel_tool_calls: bool | None = None
+    response_format: dict[str, Any] | None = None
+    stream_options: dict[str, Any] | None = None
+    user: str | None = None
+    n: int | None = Field(default=None, gt=0)
 
     @field_validator("model")
     @classmethod
@@ -57,6 +96,19 @@ class ChatCompletionRequest(BaseModel):
         if any(not item for item in value):
             raise ValueError("Stop sequence list must not contain empty strings.")
         return value
+
+    @model_validator(mode="after")
+    def validate_compatibility_options(self) -> "ChatCompletionRequest":
+        if self.max_tokens is not None and self.max_completion_tokens is not None:
+            raise ValueError("Use either max_tokens or max_completion_tokens, not both.")
+        if self.n is not None and self.n != 1:
+            raise ValueError("Only n=1 is supported.")
+        if self.response_format is not None:
+            format_type = self.response_format.get("type")
+            if format_type not in _RESPONSE_FORMAT_TYPES:
+                allowed = ", ".join(sorted(_RESPONSE_FORMAT_TYPES))
+                raise ValueError(f"Unsupported response_format type. Allowed types: {allowed}.")
+        return self
 
 
 class ChatCompletionUsage(BaseModel):
@@ -85,6 +137,7 @@ class ChatCompletionChunkDelta(BaseModel):
 
     role: str | None = None
     content: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 class ChatCompletionChunkChoice(BaseModel):
@@ -99,6 +152,7 @@ class ChatCompletionChunk(BaseModel):
     created: int
     model: str
     choices: list[ChatCompletionChunkChoice]
+    usage: ChatCompletionUsage | None = None
 
 
 class AudioSpeechRequest(BaseModel):

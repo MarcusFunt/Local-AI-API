@@ -27,13 +27,18 @@ async def chat_completions(req: ChatCompletionRequest) -> Any:
         len(req.messages),
     )
 
+    max_tokens = req.max_tokens if req.max_tokens is not None else req.max_completion_tokens
     request_dict: dict[str, Any] = {
         "messages": [m.model_dump() for m in req.messages],
         "temperature": req.temperature,
         "top_p": req.top_p,
-        "max_tokens": req.max_tokens,
+        "max_tokens": max_tokens,
         "stop": req.stop,
         "seed": req.seed,
+        "tools": req.tools,
+        "tool_choice": req.tool_choice,
+        "response_format": req.response_format,
+        "stream_options": req.stream_options,
     }
 
     if req.stream:
@@ -48,4 +53,4 @@ async def chat_completions(req: ChatCompletionRequest) -> Any:
         )
 
     completion = await ollama_client.proxy_non_streaming(resolved, request_dict, settings)
-    return JSONResponse(completion.model_dump())
+    return JSONResponse(completion.model_dump(exclude_none=True))

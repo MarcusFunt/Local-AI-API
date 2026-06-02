@@ -207,14 +207,17 @@ async def _run_dev_check() -> dict[str, Any]:
         payload = response.json()
         message = payload.get("message", {})
         content = message.get("content", "") if isinstance(message, dict) else ""
+        response_text = content.strip()
         result.update(
             {
-                "status": "passed" if content.strip() else "failed",
-                "response": content.strip(),
+                "status": "passed" if response_text == "ok" else "failed",
+                "response": response_text,
                 "prompt_tokens": payload.get("prompt_eval_count", 0) or 0,
                 "completion_tokens": payload.get("eval_count", 0) or 0,
             }
         )
+        if response_text != "ok":
+            result["error"] = "Dev model check expected exactly 'ok'."
         return result
     except httpx.TimeoutException as exc:
         result.update(
