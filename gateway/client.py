@@ -147,6 +147,13 @@ def _make_completion_id() -> str:
     return "chatcmpl-" + uuid.uuid4().hex
 
 
+def _finish_reason_from_ollama(data: dict[str, Any]) -> str:
+    done_reason = str(data.get("done_reason") or "").strip().lower()
+    if done_reason == "length":
+        return "length"
+    return "stop"
+
+
 async def proxy_non_streaming(
     resolved_model: str,
     request_dict: dict[str, Any],
@@ -188,7 +195,7 @@ async def proxy_non_streaming(
                     role=msg.get("role", "assistant"),
                     content=msg.get("content", ""),
                 ),
-                finish_reason="stop",
+                finish_reason=_finish_reason_from_ollama(data),
             )
         ],
         usage=ChatCompletionUsage(
@@ -279,7 +286,7 @@ async def proxy_streaming(
                 if not done:
                     yield _chunk({"content": content}, finish_reason=None)
                 else:
-                    yield _chunk({}, finish_reason="stop")
+                    yield _chunk({}, finish_reason=_finish_reason_from_ollama(ollama_chunk))
                     yield "data: [DONE]\n\n"
                     completed = True
 

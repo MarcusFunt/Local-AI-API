@@ -38,11 +38,53 @@ Tailscale Serve acts as the TLS terminator and access-control layer. The gateway
 
 ## Requirements
 
-- Python 3.11 or later
-- [Ollama](https://ollama.com/download) installed and running
-- [Tailscale](https://tailscale.com/download) installed (for private remote access)
-- FFmpeg installed if you use local Whisper transcription outside Docker
-- Git available if you install the optional Chatterbox audio dependencies outside Docker
+- Docker Engine or Docker Desktop with the Docker Compose plugin for the recommended container setup
+- [Tailscale](https://tailscale.com/download) installed for private remote access
+- Python 3.11 or later only if you run the gateway outside Docker
+- [Ollama](https://ollama.com/download), FFmpeg, and audio runtime libraries only if you run outside Docker
+
+---
+
+## Simple Docker setup
+
+Use these scripts when you want the gateway, Ollama, Python dependencies, and model
+setup managed by Docker without touching local Python packages:
+
+```powershell
+# Windows / Docker Desktop
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-docker.ps1
+```
+
+```bash
+# Linux, macOS, or WSL with Docker already running
+bash scripts/setup-docker.sh
+```
+
+The setup scripts:
+
+- create `.env` from `.env.example` if it does not exist
+- build the gateway image with pinned Python dependencies inside the container
+- install optional Whisper and Chatterbox dependencies inside the image by default
+- start private Ollama and gateway containers with a shared network namespace
+- pull `OLLAMA_MODELS` into the persistent `ollama-data` Docker volume
+- mount `gateway-model-cache` at `/models/cache` for Whisper, Hugging Face, and Torch model caches
+- run the test suite inside the gateway image unless `--skip-tests` / `-SkipTests` is used
+- verify `/health`, `/health/ollama`, and `/status/check`
+
+Useful options:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-docker.ps1 -Accelerator cpu
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-docker.ps1 -NoAudio -SkipTests
+```
+
+```bash
+bash scripts/setup-docker.sh --accelerator cpu
+bash scripts/setup-docker.sh --no-audio --skip-tests
+```
+
+The only host port published by Compose is `127.0.0.1:8080`. Raw Ollama remains
+private inside Docker on `127.0.0.1:11434`.
 
 ---
 
@@ -423,6 +465,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `DEFAULT_MODEL_PROFILE` | `main` | Profile used when the client omits the `model` field. |
 | `DEFAULT_WHISPER_MODEL` | `none` | Whisper profile used when transcription requests omit `model`; allowed values are `none`, `tiny`, `base`, and `small`. |
 | `WHISPER_DEVICE` | `auto` | Device for Whisper model loading (`auto`, `cpu`, `cuda`, or `mps`). |
+| `WHISPER_CACHE_DIR` | `/models/cache/whisper` in Docker | Whisper model cache directory. |
 | `CHATTERBOX_MODEL` | `chatterbox` | Chatterbox model used when speech requests omit `model`; allowed values are `chatterbox` and `chatterbox-multilingual`. |
 | `CHATTERBOX_DEVICE` | `auto` | Device for Chatterbox model loading (`auto`, `cpu`, `cuda`, or `mps`). |
 | `ENABLE_ARBITRARY_MODELS` | `false` | If `true`, any model name is forwarded to Ollama. |
@@ -438,8 +481,11 @@ Docker-only variables used by `compose.yaml`:
 | `OLLAMA_IMAGE_TAG` | `latest` | Ollama Docker image tag. |
 | `OLLAMA_KEEP_ALIVE` | `5m` | How long Ollama keeps models loaded after use. |
 | `OLLAMA_MODELS` | `qwen3.5:9b qwen3.5:4b qwen3.5:0.8b` | Space-separated model tags pulled by the Docker `model-init` service. |
+| `INSTALL_AUDIO` | `true` | Build the gateway image with Whisper and Chatterbox runtime dependencies. Set `false` for chat-only images. |
 
 In Docker, `compose.yaml` overrides `HOST=0.0.0.0` inside the shared Ollama/gateway network namespace, while the only published host port remains `127.0.0.1:8080`.
+Ollama model files live in the `ollama-data` volume, while gateway-side audio
+model caches live in the `gateway-model-cache` volume.
 
 ### Supported model values
 
@@ -475,7 +521,8 @@ Chatterbox speech model values:
 
 The local speech endpoint currently returns WAV audio only. If a client sends
 `response_format=mp3`, the gateway returns HTTP 422 instead of silently changing
-the requested format.
+the requested format. Chatterbox voice selection is not exposed by this gateway;
+requests with a `voice` value also return HTTP 422.
 
 ---
 

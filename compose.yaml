@@ -7,8 +7,12 @@ x-gateway-environment: &gateway-environment
   DEFAULT_MODEL_PROFILE: ${DEFAULT_MODEL_PROFILE:-main}
   DEFAULT_WHISPER_MODEL: ${DEFAULT_WHISPER_MODEL:-none}
   WHISPER_DEVICE: ${WHISPER_DEVICE:-auto}
+  WHISPER_CACHE_DIR: ${WHISPER_CACHE_DIR:-/models/cache/whisper}
   CHATTERBOX_MODEL: ${CHATTERBOX_MODEL:-chatterbox}
   CHATTERBOX_DEVICE: ${CHATTERBOX_DEVICE:-auto}
+  XDG_CACHE_HOME: /models/cache
+  HF_HOME: /models/cache/huggingface
+  TORCH_HOME: /models/cache/torch
   ENABLE_ARBITRARY_MODELS: ${ENABLE_ARBITRARY_MODELS:-false}
   ENABLE_API_KEY_AUTH: ${ENABLE_API_KEY_AUTH:-false}
   API_KEY: ${API_KEY:-}
@@ -57,9 +61,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_AUDIO: ${INSTALL_AUDIO:-true}
     restart: unless-stopped
     network_mode: service:ollama
     environment: *gateway-environment
+    volumes:
+      - gateway-model-cache:/models/cache
     depends_on:
       ollama:
         condition: service_healthy
@@ -80,3 +88,4 @@ services:
 
 volumes:
   ollama-data:
+  gateway-model-cache:

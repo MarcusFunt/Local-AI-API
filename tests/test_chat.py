@@ -67,6 +67,24 @@ class TestNonStreamingChatCompletion:
         assert usage["completion_tokens"] == 3
         assert usage["total_tokens"] == 13
 
+    async def test_length_done_reason_sets_finish_reason_length(
+        self, client: httpx.AsyncClient
+    ):
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={**OLLAMA_SUCCESS, "done_reason": "length"},
+                )
+            )
+            resp = await client.post(
+                "/v1/chat/completions",
+                json={"model": "main", "messages": [{"role": "user", "content": "hi"}]},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["choices"][0]["finish_reason"] == "length"
+
     async def test_small_alias_sends_correct_model_to_ollama(self, client: httpx.AsyncClient):
         captured: list[dict] = []
 
@@ -133,6 +151,50 @@ class TestNonStreamingChatCompletion:
 
     async def test_schema_error_returns_openai_422(self, client: httpx.AsyncClient):
         resp = await client.post("/v1/chat/completions", json={"model": "main"})
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "invalid_request"
+
+    async def test_empty_messages_returns_openai_422(self, client: httpx.AsyncClient):
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={"model": "main", "messages": []},
+        )
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "invalid_request"
+
+    async def test_invalid_role_returns_openai_422(self, client: httpx.AsyncClient):
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={"model": "main", "messages": [{"role": "moderator", "content": "hi"}]},
+        )
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "invalid_request"
+
+    async def test_unsupported_openai_field_returns_openai_422(
+        self, client: httpx.AsyncClient
+    ):
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "main",
+                "messages": [{"role": "user", "content": "hi"}],
+                "tools": [],
+            },
+        )
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "invalid_request"
+
+    async def test_invalid_sampling_bounds_return_openai_422(
+        self, client: httpx.AsyncClient
+    ):
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "main",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 0,
+            },
+        )
         assert resp.status_code == 422
         assert resp.json()["error"]["code"] == "invalid_request"
 
@@ -415,6 +477,31 @@ class TestStreamingChatCompletion:
         assert len(data_lines) == 4
         content_chunks = [json.loads(l)["choices"][0]["delta"].get("content") for l in data_lines[1:-1]]
         assert content_chunks == ["A", "B"]
+
+    async def test_streaming_length_done_reason_sets_finish_reason_length(
+        self, client: httpx.AsyncClient
+    ):
+        chunks = [
+            {"model": "qwen3.5:9b", "message": {"role": "assistant", "content": "A"}, "done": False},
+            {"model": "qwen3.5:9b", "message": {"role": "assistant", "content": ""}, "done": True,
+             "done_reason": "length", "prompt_eval_count": 2, "eval_count": 1},
+        ]
+
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(
+                return_value=httpx.Response(200, content=_ndjson(*chunks))
+            )
+            resp = await client.post(
+                "/v1/chat/completions",
+                json={"model": "main", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+            )
+
+        data_lines = [
+            l[6:] for l in resp.text.splitlines()
+            if l.startswith("data: ") and l != "data: [DONE]"
+        ]
+        stop_chunk = json.loads(data_lines[-1])
+        assert stop_chunk["choices"][0]["finish_reason"] == "length"
 
     async def test_streaming_connect_error_becomes_502(self, client: httpx.AsyncClient):
         with respx.mock(base_url=OLLAMA_BASE) as mock:

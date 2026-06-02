@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _WHISPER_MODELS: dict[tuple[str, str], Any] = {}
 _CHATTERBOX_MODELS: dict[tuple[str, str], Any] = {}
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
 def _audio_exception(
@@ -85,35 +86,53 @@ def _audio_suffix(filename: str | None) -> str:
     return suffix
 
 
-async def _read_upload_to_tempfile(file: UploadFile) -> Path:
-    data = await file.read()
-    if not data:
+async def _read_upload_to_tempfile(file: UploadFile, max_bytes: int | None = None) -> Path:
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=_audio_suffix(file.filename))
+    temp_path = Path(temp.name)
+    bytes_seen = 0
+    try:
+        while True:
+            chunk = await file.read(_UPLOAD_CHUNK_BYTES)
+            if not chunk:
+                break
+            bytes_seen += len(chunk)
+            if max_bytes is not None and bytes_seen > max_bytes:
+                raise _audio_exception(
+                    413,
+                    f"Audio upload too large ({bytes_seen} bytes > {max_bytes} byte limit).",
+                    "request_too_large",
+                )
+            temp.write(chunk)
+    except Exception:
+        temp.close()
+        temp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        if not temp.closed:
+            temp.close()
+
+    if bytes_seen == 0:
+        temp_path.unlink(missing_ok=True)
         raise _audio_exception(
             422,
             "Audio upload is empty.",
             "empty_audio_file",
         )
 
-    temp = tempfile.NamedTemporaryFile(delete=False, suffix=_audio_suffix(file.filename))
-    temp_path = Path(temp.name)
-    try:
-        temp.write(data)
-    finally:
-        temp.close()
     return temp_path
 
 
-def _load_whisper_model(model_name: str, device: str) -> Any:
+def _load_whisper_model(model_name: str, device: str, download_root: str | None = None) -> Any:
     try:
         import whisper
     except ImportError as exc:
         raise _missing_dependency_exception("Whisper transcription", "openai-whisper") from exc
 
-    cache_key = (model_name, device)
+    cache_key = (model_name, device, download_root or "")
     model = _WHISPER_MODELS.get(cache_key)
     if model is None:
         logger.info("Loading Whisper model (model=%s device=%s)", model_name, device)
-        model = whisper.load_model(model_name, device=device)
+        model = whisper.load_model(model_name, device=device, download_root=download_root)
         _WHISPER_MODELS[cache_key] = model
     return model
 
@@ -126,11 +145,12 @@ async def transcribe_with_whisper(
     prompt: str | None = None,
     temperature: float | None = None,
 ) -> dict[str, Any]:
-    temp_path = await _read_upload_to_tempfile(file)
+    temp_path = await _read_upload_to_tempfile(file, max_bytes=settings.max_request_body_bytes)
     device = _select_device(settings.whisper_device)
+    whisper_cache_dir = settings.whisper_cache_dir.strip() or None
 
     def run_transcription() -> dict[str, Any]:
-        model = _load_whisper_model(resolved_model, device)
+        model = _load_whisper_model(resolved_model, device, download_root=whisper_cache_dir)
         options: dict[str, Any] = {}
         if language:
             options["language"] = language

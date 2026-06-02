@@ -82,6 +82,13 @@ class TestArbitraryGating:
         s = _settings(enable_arbitrary_models=True)
         assert resolve_model("my-custom-model:latest", s) == "my-custom-model:latest"
 
+    def test_empty_string_rejected_when_arbitrary_enabled(self):
+        s = _settings(enable_arbitrary_models=True)
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_model("   ", s)
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"]["code"] == "model_not_found"
+
 
 class TestWhitespaceHandling:
     def test_leading_trailing_whitespace_stripped(self):

@@ -17,12 +17,17 @@ COMPOSE_VARIANTS = {
     "amd": ["compose.yaml", "compose.gpu-amd.yaml"],
 }
 SHELL_SCRIPTS = [
+    "scripts/setup-docker.sh",
     "scripts/install-or-update.sh",
     "scripts/bootstrap-ubuntu26-ai-server.sh",
     "scripts/setup-agent-runtime.sh",
     "scripts/run-agent-container.sh",
     "scripts/backup-server-state.sh",
     "scripts/verify-server-plan.sh",
+]
+POWERSHELL_SCRIPTS = [
+    "scripts/setup-docker.ps1",
+    "scripts/install-or-update.ps1",
 ]
 
 
@@ -31,7 +36,8 @@ def _compose_config(files: list[str]) -> dict:
         pytest.skip("docker is not installed")
 
     env = os.environ.copy()
-    env.pop("OLLAMA_MODELS", None)
+    for key in ("INSTALL_AUDIO", "OLLAMA_MODELS", "WHISPER_CACHE_DIR"):
+        env.pop(key, None)
 
     command = ["docker", "compose"]
     for file_name in files:
@@ -87,6 +93,28 @@ def test_gateway_keeps_ollama_loopback_and_shared_namespace(files: list[str]):
 
 
 @pytest.mark.parametrize("files", COMPOSE_VARIANTS.values())
+def test_gateway_container_owns_python_and_model_caches(files: list[str]):
+    config = _compose_config(files)
+
+    gateway = config["services"]["gateway"]
+    environment = gateway["environment"]
+    volumes = gateway["volumes"]
+
+    assert gateway["build"]["args"]["INSTALL_AUDIO"] == "true"
+    assert environment["XDG_CACHE_HOME"] == "/models/cache"
+    assert environment["HF_HOME"] == "/models/cache/huggingface"
+    assert environment["TORCH_HOME"] == "/models/cache/torch"
+    assert environment["WHISPER_CACHE_DIR"] == "/models/cache/whisper"
+    assert {
+        "type": "volume",
+        "source": "gateway-model-cache",
+        "target": "/models/cache",
+        "volume": {},
+    } in volumes
+    assert "gateway-model-cache" in config["volumes"]
+
+
+@pytest.mark.parametrize("files", COMPOSE_VARIANTS.values())
 def test_only_gateway_port_is_published_on_loopback(files: list[str]):
     config = _compose_config(files)
     published_ports = []
@@ -120,7 +148,8 @@ def test_shell_script_has_valid_bash_syntax(script: str):
     assert result.returncode == 0, result.stderr
 
 
-def test_windows_install_or_update_script_has_valid_powershell_syntax():
+@pytest.mark.parametrize("script", POWERSHELL_SCRIPTS)
+def test_powershell_script_has_valid_syntax(script: str):
     powershell = shutil.which("pwsh") or shutil.which("powershell")
     if powershell is None:
         pytest.skip("PowerShell is not installed")
@@ -129,7 +158,7 @@ def test_windows_install_or_update_script_has_valid_powershell_syntax():
         "$tokens = $null; "
         "$errors = $null; "
         "[System.Management.Automation.Language.Parser]::ParseFile("
-        "'scripts/install-or-update.ps1', [ref]$tokens, [ref]$errors) | Out-Null; "
+        f"'{script}', [ref]$tokens, [ref]$errors) | Out-Null; "
         "if ($errors.Count -gt 0) { "
         "$errors | ForEach-Object { Write-Error $_.Message }; "
         "exit 1 "

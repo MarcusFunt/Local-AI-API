@@ -26,6 +26,17 @@ CHATTERBOX_MODEL_MAP: dict[str, str] = {
 
 def resolve_model(requested: str, settings: Settings) -> str:
     requested = requested.strip()
+    if not requested:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": {
+                    "message": "Model must not be empty.",
+                    "type": "invalid_request_error",
+                    "code": "model_not_found",
+                }
+            },
+        )
 
     if requested in MODEL_MAP:
         return MODEL_MAP[requested]

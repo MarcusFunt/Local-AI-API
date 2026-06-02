@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     enable_arbitrary_models: bool = False
     default_whisper_model: str = "none"
     whisper_device: str = "auto"
+    whisper_cache_dir: str = ""
     chatterbox_model: str = "chatterbox"
     chatterbox_device: str = "auto"
 

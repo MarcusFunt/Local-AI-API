@@ -121,6 +121,13 @@ async def audio_speech(req: AudioSpeechRequest) -> Response:
             "unsupported_speech_option",
         )
 
+    if req.voice is not None:
+        raise _error_response(
+            422,
+            "Speech voice selection is not supported by the local Chatterbox endpoint.",
+            "unsupported_speech_option",
+        )
+
     model_alias = req.model if req.model else settings.chatterbox_model
     resolved_model = resolve_chatterbox_model(model_alias, settings)
 

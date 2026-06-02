@@ -1,8 +1,10 @@
 """Tests for OpenAI-style local audio endpoints."""
 from __future__ import annotations
 
+import io
 from typing import Any
 
+from fastapi import HTTPException, UploadFile
 import httpx
 import pytest
 
@@ -212,3 +214,45 @@ class TestAudioSpeech:
 
         assert resp.status_code == 422
         assert resp.json()["error"]["code"] == "unsupported_speech_option"
+
+    async def test_unsupported_voice_returns_422(
+        self,
+        client: httpx.AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        import gateway.audio as audio_module
+
+        async def fake_speech(**kwargs: Any) -> bytes:
+            raise AssertionError("speech synthesis should not be called")
+
+        monkeypatch.setattr(audio_module, "synthesize_speech_with_chatterbox", fake_speech)
+
+        resp = await client.post(
+            "/v1/audio/speech",
+            json={"model": "chatterbox", "input": "hello", "voice": "alloy"},
+        )
+
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "unsupported_speech_option"
+
+
+class TestAudioUploadHelpers:
+    async def test_upload_is_written_to_tempfile_in_chunks(self):
+        import gateway.audio as audio_module
+
+        upload = UploadFile(file=io.BytesIO(b"RIFF....WAVE"), filename="sample.wav")
+        path = await audio_module._read_upload_to_tempfile(upload, max_bytes=1024)
+        try:
+            assert path.read_bytes() == b"RIFF....WAVE"
+        finally:
+            path.unlink(missing_ok=True)
+
+    async def test_upload_size_limit_returns_413(self):
+        import gateway.audio as audio_module
+
+        upload = UploadFile(file=io.BytesIO(b"x" * 8), filename="sample.wav")
+        with pytest.raises(HTTPException) as exc_info:
+            await audio_module._read_upload_to_tempfile(upload, max_bytes=4)
+
+        assert exc_info.value.status_code == 413
+        assert exc_info.value.detail["error"]["code"] == "request_too_large"

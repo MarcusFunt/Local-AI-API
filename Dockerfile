@@ -2,7 +2,12 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    HOME=/home/app \
+    XDG_CACHE_HOME=/models/cache \
+    HF_HOME=/models/cache/huggingface \
+    TORCH_HOME=/models/cache/torch \
+    WHISPER_CACHE_DIR=/models/cache/whisper
 
 WORKDIR /app
 
@@ -13,7 +18,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system app && \
-    useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app
+    useradd --system --gid app --home-dir /home/app --shell /usr/sbin/nologin app && \
+    mkdir -p /home/app /models/cache
 
 COPY requirements.txt requirements-audio.txt ./
 RUN python -m pip install --upgrade pip && \
@@ -28,7 +34,7 @@ COPY scripts ./scripts
 COPY pytest.ini .
 COPY Dockerfile compose.yaml compose.cpu.yaml compose.gpu-amd.yaml compose.gpu-nvidia.yaml ./
 
-RUN chown -R app:app /app
+RUN chown -R app:app /app /home/app /models
 
 USER app
 EXPOSE 8080
