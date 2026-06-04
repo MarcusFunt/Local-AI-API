@@ -7,13 +7,17 @@ A private, lightweight OpenAI-compatible gateway for [Ollama](https://ollama.com
 ## What this gateway does
 
 - Accepts `POST /v1/chat/completions` requests in OpenAI format
+- Accepts `GET /v1/models` requests for the gateway allowlist
 - Normalises model aliases (`main` → `qwen3.5:9b`, `small` → `qwen3.5:4b`, `dev` → `qwen3.5:0.8b`)
+- Agent Zero aliases are `agent` (`qwen3:14b`) and `agent-utility` (`qwen3:8b`)
 - Proxies requests to Ollama running on `127.0.0.1:11434`
 - Translates Ollama's response format back to the OpenAI envelope
 - Supports both streaming (`stream: true`) and non-streaming responses
 - Accepts `POST /v1/audio/transcriptions` requests using local Whisper models
 - Accepts `POST /v1/audio/speech` requests using local Chatterbox TTS
 - Provides health endpoints at `GET /health` and `GET /health/ollama`
+- Optionally runs Agent Zero as a separate Docker UI that uses this gateway as
+  an OpenAI-compatible provider
 
 ---
 
@@ -173,6 +177,8 @@ The Windows script:
 - builds the gateway image and runs `python -m pytest tests -v` inside it before restarting the live gateway
 - pulls the space-separated `OLLAMA_MODELS` list from `.env`, defaulting to `qwen3.5:9b`, `qwen3.5:4b`, and `qwen3.5:0.8b`
 - configures `tailscale serve --bg http://127.0.0.1:8080` when Tailscale is installed and authenticated
+- optionally starts Agent Zero on `127.0.0.1:50080` when `AGENT_ZERO_ENABLED=true`, using `agent` and `agent-utility` through this gateway
+- optionally configures Agent Zero for Tailscale Serve on HTTPS port `8443`
 - installs a per-user Scheduled Task using the selected update schedule, defaulting to logon and daily using the same script
 
 AMD/ROCm Docker acceleration is Linux-only in this project; Windows hosts use CPU unless NVIDIA Docker GPU access is available.
@@ -201,11 +207,24 @@ To run a manual update later:
 powershell -ExecutionPolicy Bypass -File .\scripts\install-or-update.ps1
 ```
 
+### Optional Agent Zero on Windows
+
+Set `AGENT_ZERO_ENABLED=true` in `.env`, or enable the Agent Zero option in the
+graphical installer, to start Agent Zero alongside the gateway on Windows Docker
+Desktop. The installer adds `qwen3:14b` and `qwen3:8b` to `OLLAMA_MODELS`, starts
+Agent Zero on `http://127.0.0.1:50080`, and configures Tailscale Serve for
+`https://<machine>.ts.net:8443/` when Tailscale is available.
+
+Agent Zero is configured to use this gateway's `/v1` OpenAI-compatible API with
+the `agent` and `agent-utility` model aliases. Do not use Agent Zero's public
+Remote Link, Cloudflare Tunnel, Tailscale Funnel, or Microsoft Dev Tunnels in
+this project; keep access private through Tailscale Serve.
+
 ---
 
 ## Graphical installer
 
-Run the Tkinter GUI when you want to choose models, the default profile, optional bearer-token auth, Tailscale setup, accelerator profile, and repository auto-update cadence:
+Run the Tkinter GUI when you want to choose models, the default profile, optional bearer-token auth, optional Agent Zero support, Tailscale setup, accelerator profile, and repository auto-update cadence:
 
 ```powershell
 python .\scripts\install_gui.py
@@ -489,6 +508,9 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `CHATTERBOX_MODEL` | `chatterbox` | Chatterbox model used when speech requests omit `model`; allowed values are `chatterbox` and `chatterbox-multilingual`. |
 | `CHATTERBOX_DEVICE` | `auto` | Device for Chatterbox model loading (`auto`, `cpu`, `cuda`, or `mps`). |
 | `ENABLE_ARBITRARY_MODELS` | `false` | If `true`, any model name is forwarded to Ollama. |
+| `AGENT_ZERO_ENABLED` | `false` | If `true`, Windows Docker install/update starts Agent Zero and status treats `agent` and `agent-utility` as required models. |
+| `AGENT_ZERO_PORT` | `50080` | Host loopback port for the Agent Zero UI. |
+| `AGENT_ZERO_TAILSCALE_HTTPS_PORT` | `8443` | Tailscale Serve HTTPS port for Agent Zero. |
 | `ENABLE_API_KEY_AUTH` | `false` | If `true`, requires a `Bearer` token on all non-health requests. |
 | `API_KEY` | *(empty)* | The required non-empty token when `ENABLE_API_KEY_AUTH=true`. |
 | `REQUEST_TIMEOUT_SECONDS` | `600` | Max seconds to wait for Ollama. Large models can be slow on first load. |
@@ -502,6 +524,7 @@ Docker-only variables used by `compose.yaml`:
 | `OLLAMA_KEEP_ALIVE` | `5m` | How long Ollama keeps models loaded after use. |
 | `OLLAMA_MODELS` | `qwen3.5:9b qwen3.5:4b qwen3.5:0.8b` | Space-separated model tags pulled by the Docker `model-init` service. |
 | `INSTALL_AUDIO` | `true` | Build the gateway image with Whisper and Chatterbox runtime dependencies. Set `false` for chat-only images. |
+| `AGENT_ZERO_IMAGE_TAG` | `latest` | Agent Zero Docker image tag when `compose.agent-zero.yaml` is enabled. |
 
 In Docker, `compose.yaml` overrides `HOST=0.0.0.0` inside the shared Ollama/gateway network namespace, while the only published host port remains `127.0.0.1:8080`.
 Ollama model files live in the `ollama-data` volume, while gateway-side audio
@@ -516,9 +539,13 @@ The `dev` profile is intended for faster local development and uses [Qwen/Qwen3.
 | `main` | `qwen3.5:9b` |
 | `small` | `qwen3.5:4b` |
 | `dev` | `qwen3.5:0.8b` |
+| `agent` | `qwen3:14b` |
+| `agent-utility` | `qwen3:8b` |
 | `qwen3.5:9b` | `qwen3.5:9b` |
 | `qwen3.5:4b` | `qwen3.5:4b` |
 | `qwen3.5:0.8b` | `qwen3.5:0.8b` |
+| `qwen3:14b` | `qwen3:14b` |
+| `qwen3:8b` | `qwen3:8b` |
 | anything else | HTTP 422 (unless `ENABLE_ARBITRARY_MODELS=true`) |
 
 ### Supported audio model values

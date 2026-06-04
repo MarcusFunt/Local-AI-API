@@ -41,6 +41,12 @@ class TestAliasMapping:
     def test_dev_resolves_to_development_model(self):
         assert resolve_model("dev", _settings()) == "qwen3.5:0.8b"
 
+    def test_agent_resolves_to_agent_model(self):
+        assert resolve_model("agent", _settings()) == "qwen3:14b"
+
+    def test_agent_utility_resolves_to_utility_model(self):
+        assert resolve_model("agent-utility", _settings()) == "qwen3:8b"
+
     def test_all_aliases_covered(self):
         """Every key in MODEL_MAP must resolve without error."""
         s = _settings()
@@ -57,6 +63,32 @@ class TestDirectModelTags:
 
     def test_direct_development_tag_accepted(self):
         assert resolve_model("qwen3.5:0.8b", _settings()) == "qwen3.5:0.8b"
+
+    def test_direct_agent_tag_accepted(self):
+        assert resolve_model("qwen3:14b", _settings()) == "qwen3:14b"
+
+    def test_direct_agent_utility_tag_accepted(self):
+        assert resolve_model("qwen3:8b", _settings()) == "qwen3:8b"
+
+
+class TestSafeProviderPrefixes:
+    def test_openai_prefixed_alias_resolves(self):
+        assert resolve_model("openai/agent", _settings()) == "qwen3:14b"
+
+    def test_openai_prefixed_direct_tag_resolves(self):
+        assert resolve_model("openai/qwen3:14b", _settings()) == "qwen3:14b"
+
+    def test_other_provider_prefix_is_not_stripped(self):
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_model("anthropic/agent", _settings())
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"]["code"] == "model_not_found"
+
+    def test_unknown_openai_prefixed_model_is_rejected_by_default(self):
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_model("openai/llama3:8b", _settings())
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"]["code"] == "model_not_found"
 
 
 class TestArbitraryGating:

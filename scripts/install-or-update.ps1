@@ -5,6 +5,7 @@ param(
     [string]$Accelerator = $(if ([string]::IsNullOrWhiteSpace($env:LOCAL_AI_API_ACCELERATOR)) { "auto" } else { $env:LOCAL_AI_API_ACCELERATOR }),
     [switch]$SkipRepoSync,
     [switch]$SkipTailscaleServe,
+    [switch]$AgentZero,
     [switch]$NoScheduledTask,
     [switch]$ScheduledRun,
     [ValidateSet("default", "none", "logon", "daily", "weekly", "every-hours")]
@@ -27,6 +28,9 @@ $OllamaHealthUrl = if ([string]::IsNullOrWhiteSpace($env:OLLAMA_HEALTH_URL)) { "
 $TaskName = "Local AI API Update"
 $script:InstallMutex = $null
 $script:InstallMutexAcquired = $false
+$script:AgentZeroEnabled = $false
+$script:AgentZeroPort = 50080
+$script:AgentZeroTailscaleHttpsPort = 8443
 
 if ($env:LOCAL_AI_API_SKIP_REPO_SYNC -eq "1") {
     $SkipRepoSync = $true
@@ -123,6 +127,9 @@ function Get-ReexecArguments {
     if ($SkipTailscaleServe) {
         $arguments += "-SkipTailscaleServe"
     }
+    if ($AgentZero) {
+        $arguments += "-AgentZero"
+    }
     if ($NoScheduledTask) {
         $arguments += "-NoScheduledTask"
     }
@@ -143,6 +150,80 @@ function Get-ReexecArguments {
     }
 
     return $arguments
+}
+
+function Get-EnvFileValue {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Key
+    )
+
+    $envPath = Join-Path $Root ".env"
+    if (-not (Test-Path -LiteralPath $envPath)) {
+        return $null
+    }
+
+    foreach ($line in Get-Content -LiteralPath $envPath) {
+        if ($line -match "^\s*#") {
+            continue
+        }
+        if ($line -match "^\s*$([regex]::Escape($Key))\s*=\s*(.*)$") {
+            $value = $Matches[1].Trim()
+            if (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+            return $value
+        }
+    }
+
+    return $null
+}
+
+function Test-TruthyValue {
+    param([AllowNull()][string]$Value)
+
+    return $Value -match "^(?i:1|true|yes|on)$"
+}
+
+function Resolve-AgentZeroEnabled {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    if ($AgentZero) {
+        return $true
+    }
+    if (Test-TruthyValue -Value $env:AGENT_ZERO_ENABLED) {
+        return $true
+    }
+
+    return Test-TruthyValue -Value (Get-EnvFileValue -Root $Root -Key "AGENT_ZERO_ENABLED")
+}
+
+function Resolve-EnvInt {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Key,
+        [Parameter(Mandatory = $true)][int]$Default
+    )
+
+    $envValue = [Environment]::GetEnvironmentVariable($Key)
+    $value = if (-not [string]::IsNullOrWhiteSpace($envValue)) {
+        $envValue
+    }
+    else {
+        Get-EnvFileValue -Root $Root -Key $Key
+    }
+
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return $Default
+    }
+    if ($value -notmatch "^[0-9]+$") {
+        Stop-Fail "$Key must be numeric."
+    }
+    $number = [int]$value
+    if ($number -lt 1 -or $number -gt 65535) {
+        Stop-Fail "$Key must be between 1 and 65535."
+    }
+    return $number
 }
 
 function Get-TimeOfDay {
@@ -315,15 +396,21 @@ function Get-ComposeArgumentsForAccelerator {
 
     switch ($SelectedAccelerator) {
         "nvidia" {
-            return @("-f", (Join-Path $Root "compose.yaml"), "-f", (Join-Path $Root "compose.gpu-nvidia.yaml"))
+            $arguments = @("-f", (Join-Path $Root "compose.yaml"), "-f", (Join-Path $Root "compose.gpu-nvidia.yaml"))
         }
         "cpu" {
-            return @("-f", (Join-Path $Root "compose.yaml"), "-f", (Join-Path $Root "compose.cpu.yaml"))
+            $arguments = @("-f", (Join-Path $Root "compose.yaml"), "-f", (Join-Path $Root "compose.cpu.yaml"))
         }
         default {
             Stop-Fail "Unknown Windows accelerator profile: $SelectedAccelerator"
         }
     }
+
+    if ($script:AgentZeroEnabled) {
+        $arguments += @("-f", (Join-Path $Root "compose.agent-zero.yaml"))
+    }
+
+    return $arguments
 }
 
 function Build-And-TestGatewayImage {
@@ -356,6 +443,11 @@ function Start-Stack {
 
     Write-Log "Starting gateway."
     Invoke-DockerCompose -ComposeArguments $ComposeArguments -CommandArguments @("up", "-d", "gateway")
+
+    if ($script:AgentZeroEnabled) {
+        Write-Log "Starting Agent Zero."
+        Invoke-DockerCompose -ComposeArguments $ComposeArguments -CommandArguments @("up", "-d", "agent-zero")
+    }
 }
 
 function Wait-ForUrl {
@@ -425,6 +517,14 @@ function Configure-TailscaleServe {
     if ($LASTEXITCODE -ne 0) {
         Write-Log "Tailscale Serve command failed; leaving current serve config unchanged."
     }
+
+    if ($script:AgentZeroEnabled) {
+        Write-Log "Configuring Tailscale Serve for Agent Zero on HTTPS port $script:AgentZeroTailscaleHttpsPort."
+        & $tailscale serve --bg "--https=$script:AgentZeroTailscaleHttpsPort" "http://127.0.0.1:$script:AgentZeroPort"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Log "Agent Zero Tailscale Serve command failed; leaving current serve config unchanged."
+        }
+    }
 }
 
 function Install-ScheduledTask {
@@ -456,6 +556,9 @@ function Install-ScheduledTask {
     }
     if ($SkipTailscaleServe) {
         $taskArguments += " -SkipTailscaleServe"
+    }
+    if ($script:AgentZeroEnabled) {
+        $taskArguments += " -AgentZero"
     }
 
     $timeOfDay = Get-TimeOfDay -Value $UpdateTime
@@ -510,10 +613,16 @@ function Main {
     $scriptPath = Join-Path $root "scripts\install-or-update.ps1"
 
     Sync-RepoToGitHub -Root $root -ScriptPath $scriptPath
+    $script:AgentZeroEnabled = Resolve-AgentZeroEnabled -Root $root
+    $script:AgentZeroPort = Resolve-EnvInt -Root $root -Key "AGENT_ZERO_PORT" -Default 50080
+    $script:AgentZeroTailscaleHttpsPort = Resolve-EnvInt -Root $root -Key "AGENT_ZERO_TAILSCALE_HTTPS_PORT" -Default 8443
     Require-DockerDesktop
 
     $selectedAccelerator = Get-AcceleratorProfile
     Write-Log "Selected accelerator profile: $selectedAccelerator."
+    if ($script:AgentZeroEnabled) {
+        Write-Log "Agent Zero support enabled (local UI port $script:AgentZeroPort, Tailscale HTTPS port $script:AgentZeroTailscaleHttpsPort)."
+    }
     $composeArguments = @(Get-ComposeArgumentsForAccelerator -Root $root -SelectedAccelerator $selectedAccelerator)
 
     Build-And-TestGatewayImage -ComposeArguments $composeArguments
@@ -521,6 +630,9 @@ function Main {
 
     Wait-ForUrl -Url $GatewayHealthUrl -Label "Gateway health"
     Wait-ForUrl -Url $OllamaHealthUrl -Label "Ollama health"
+    if ($script:AgentZeroEnabled) {
+        Wait-ForUrl -Url "http://127.0.0.1:$script:AgentZeroPort" -Label "Agent Zero UI" -Attempts 90
+    }
 
     Configure-TailscaleServe
     Install-ScheduledTask -Root $root -ScriptPath $scriptPath

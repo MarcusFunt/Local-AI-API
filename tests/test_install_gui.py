@@ -68,6 +68,21 @@ def test_env_updates_can_select_whisper_model(installer):
     assert updates["DEFAULT_WHISPER_MODEL"] == "base"
 
 
+def test_env_updates_agent_zero_adds_required_models(installer):
+    config = installer.InstallConfig(
+        models=["dev"],
+        default_profile="dev",
+        agent_zero_enabled=True,
+    )
+
+    updates = installer.build_env_updates(config, MODEL_MAP)
+
+    assert updates["AGENT_ZERO_ENABLED"] == "true"
+    assert updates["AGENT_ZERO_PORT"] == "50080"
+    assert updates["AGENT_ZERO_TAILSCALE_HTTPS_PORT"] == "8443"
+    assert updates["OLLAMA_MODELS"] == "qwen3.5:0.8b qwen3:14b qwen3:8b"
+
+
 def test_gui_rejects_unknown_whisper_model(installer):
     config = installer.InstallConfig(
         models=["dev"],
@@ -110,6 +125,18 @@ def test_windows_install_command_includes_schedule_options(installer):
     assert command[command.index("-UpdateSchedule") + 1] == "every-hours"
     assert command[command.index("-UpdateTime") + 1] == "02:30"
     assert command[command.index("-EveryHours") + 1] == "6"
+
+
+def test_windows_install_command_includes_agent_zero_switch(installer):
+    config = installer.InstallConfig(
+        models=["main"],
+        default_profile="main",
+        agent_zero_enabled=True,
+    )
+
+    command = installer.build_install_command(REPO_ROOT, config, system="Windows")
+
+    assert "-AgentZero" in command
 
 
 def test_linux_install_command_includes_schedule_options(installer):

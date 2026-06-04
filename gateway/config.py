@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     request_timeout_seconds: int = 600
     max_request_body_bytes: int = 10_485_760
     enable_arbitrary_models: bool = False
+    agent_zero_enabled: bool = False
     default_whisper_model: str = "none"
     whisper_device: str = "auto"
     whisper_cache_dir: str = ""

@@ -22,6 +22,8 @@ FALLBACK_MODEL_MAP = {
     "main": "qwen3.5:9b",
     "small": "qwen3.5:4b",
     "dev": "qwen3.5:0.8b",
+    "agent": "qwen3:14b",
+    "agent-utility": "qwen3:8b",
 }
 FALLBACK_WHISPER_MODEL_MAP: dict[str, str | None] = {
     "none": None,
@@ -48,7 +50,18 @@ EVERY_HOURS_CHOICES = (1, 2, 3, 4, 6, 8, 12, 24)
 ACCELERATOR_CHOICES = ("auto", "cpu", "nvidia", "amd")
 WINDOWS_ACCELERATOR_CHOICES = ("auto", "cpu", "nvidia")
 TIME_RE = re.compile(r"^([01][0-9]|2[0-3]):([0-5][0-9])$")
+DEFAULT_SELECTED_MODEL_ALIASES = ("main", "small", "dev")
 LogFn = Callable[[str], None]
+
+
+def _assignment_value_for_name(node: ast.stmt, name: str) -> ast.expr | None:
+    if isinstance(node, ast.Assign) and any(
+        isinstance(target, ast.Name) and target.id == name for target in node.targets
+    ):
+        return node.value
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
+        return node.value
+    return None
 
 
 @dataclass
@@ -67,6 +80,9 @@ class InstallConfig:
     chatterbox_model: str = "chatterbox"
     enable_api_key_auth: bool = False
     api_key: str = ""
+    agent_zero_enabled: bool = False
+    agent_zero_port: int = 50080
+    agent_zero_tailscale_https_port: int = 8443
 
 
 def read_model_map(repo_root: Path = REPO_ROOT) -> dict[str, str]:
@@ -77,11 +93,10 @@ def read_model_map(repo_root: Path = REPO_ROOT) -> dict[str, str]:
         return FALLBACK_MODEL_MAP.copy()
 
     for node in tree.body:
-        if not isinstance(node, ast.Assign):
+        assignment_value = _assignment_value_for_name(node, "MODEL_MAP")
+        if assignment_value is None:
             continue
-        if not any(isinstance(target, ast.Name) and target.id == "MODEL_MAP" for target in node.targets):
-            continue
-        value = ast.literal_eval(node.value)
+        value = ast.literal_eval(assignment_value)
         if isinstance(value, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in value.items()):
             return dict(value)
 
@@ -96,11 +111,10 @@ def read_whisper_model_map(repo_root: Path = REPO_ROOT) -> dict[str, str | None]
         return FALLBACK_WHISPER_MODEL_MAP.copy()
 
     for node in tree.body:
-        if not isinstance(node, ast.Assign):
+        assignment_value = _assignment_value_for_name(node, "WHISPER_MODEL_MAP")
+        if assignment_value is None:
             continue
-        if not any(isinstance(target, ast.Name) and target.id == "WHISPER_MODEL_MAP" for target in node.targets):
-            continue
-        value = ast.literal_eval(node.value)
+        value = ast.literal_eval(assignment_value)
         if isinstance(value, dict) and all(
             isinstance(k, str) and (isinstance(v, str) or v is None) for k, v in value.items()
         ):
@@ -117,11 +131,10 @@ def read_chatterbox_model_map(repo_root: Path = REPO_ROOT) -> dict[str, str]:
         return FALLBACK_CHATTERBOX_MODEL_MAP.copy()
 
     for node in tree.body:
-        if not isinstance(node, ast.Assign):
+        assignment_value = _assignment_value_for_name(node, "CHATTERBOX_MODEL_MAP")
+        if assignment_value is None:
             continue
-        if not any(isinstance(target, ast.Name) and target.id == "CHATTERBOX_MODEL_MAP" for target in node.targets):
-            continue
-        value = ast.literal_eval(node.value)
+        value = ast.literal_eval(assignment_value)
         if isinstance(value, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in value.items()):
             return dict(value)
 
@@ -153,6 +166,11 @@ def _env_bool(value: str | None) -> bool:
 def _aliases_from_model_tags(model_map: dict[str, str], model_tags: str) -> list[str]:
     selected_tags = model_tags.split()
     aliases = [alias for alias, tag in model_map.items() if tag in selected_tags]
+    return aliases or default_selected_model_aliases(model_map)
+
+
+def default_selected_model_aliases(model_map: dict[str, str]) -> list[str]:
+    aliases = [alias for alias in DEFAULT_SELECTED_MODEL_ALIASES if alias in model_map]
     return aliases or list(model_map)
 
 
@@ -162,7 +180,7 @@ def load_previous_config(
     whisper_model_map: dict[str, str | None] | None = None,
     chatterbox_model_map: dict[str, str] | None = None,
 ) -> InstallConfig:
-    config = InstallConfig(models=list(model_map))
+    config = InstallConfig(models=default_selected_model_aliases(model_map))
     whisper_model_map = whisper_model_map or FALLBACK_WHISPER_MODEL_MAP
     chatterbox_model_map = chatterbox_model_map or FALLBACK_CHATTERBOX_MODEL_MAP
     env_values = parse_env_file(repo_root / ".env")
@@ -177,6 +195,11 @@ def load_previous_config(
         config.chatterbox_model = env_values["CHATTERBOX_MODEL"]
     if env_values.get("PORT", "").isdigit():
         config.port = int(env_values["PORT"])
+    config.agent_zero_enabled = _env_bool(env_values.get("AGENT_ZERO_ENABLED"))
+    if env_values.get("AGENT_ZERO_PORT", "").isdigit():
+        config.agent_zero_port = int(env_values["AGENT_ZERO_PORT"])
+    if env_values.get("AGENT_ZERO_TAILSCALE_HTTPS_PORT", "").isdigit():
+        config.agent_zero_tailscale_https_port = int(env_values["AGENT_ZERO_TAILSCALE_HTTPS_PORT"])
     config.enable_api_key_auth = _env_bool(env_values.get("ENABLE_API_KEY_AUTH"))
     config.api_key = env_values.get("API_KEY", "")
 
@@ -192,8 +215,10 @@ def load_previous_config(
                     setattr(config, key, state[key])
 
     if not isinstance(config.models, list):
-        config.models = list(model_map)
-    config.models = [alias for alias in config.models if isinstance(alias, str) and alias in model_map] or list(model_map)
+        config.models = default_selected_model_aliases(model_map)
+    config.models = [
+        alias for alias in config.models if isinstance(alias, str) and alias in model_map
+    ] or default_selected_model_aliases(model_map)
     if config.default_profile not in model_map:
         config.default_profile = next(iter(model_map))
     if config.whisper_model not in whisper_model_map:
@@ -208,6 +233,14 @@ def load_previous_config(
         config.every_hours = int(config.every_hours)
     except (TypeError, ValueError):
         config.every_hours = 6
+    try:
+        config.agent_zero_port = int(config.agent_zero_port)
+    except (TypeError, ValueError):
+        config.agent_zero_port = 50080
+    try:
+        config.agent_zero_tailscale_https_port = int(config.agent_zero_tailscale_https_port)
+    except (TypeError, ValueError):
+        config.agent_zero_tailscale_https_port = 8443
 
     return config
 
@@ -242,15 +275,46 @@ def validate_config(
         errors.append("Choose a valid default model profile.")
     elif config.default_profile not in selected:
         errors.append("The default model profile must also be selected for installation.")
+    if config.agent_zero_enabled:
+        missing_agent_aliases = {"agent", "agent-utility"} - set(model_map)
+        if missing_agent_aliases:
+            errors.append(
+                "Agent Zero requires model aliases: "
+                + ", ".join(sorted(missing_agent_aliases))
+                + "."
+            )
+    gateway_port: int | None = None
     try:
-        port = int(config.port)
+        gateway_port = int(config.port)
     except (TypeError, ValueError):
         errors.append("Gateway port must be a number.")
     else:
-        if not 1 <= port <= 65535:
+        if not 1 <= gateway_port <= 65535:
             errors.append("Gateway port must be between 1 and 65535.")
-        if port == 11434:
+        if gateway_port == 11434:
             errors.append("Port 11434 is reserved for private Ollama loopback traffic.")
+    for label, value in (
+        ("Agent Zero local UI port", config.agent_zero_port),
+        ("Agent Zero Tailscale HTTPS port", config.agent_zero_tailscale_https_port),
+    ):
+        try:
+            agent_port = int(value)
+        except (TypeError, ValueError):
+            errors.append(f"{label} must be a number.")
+            continue
+        if not 1 <= agent_port <= 65535:
+            errors.append(f"{label} must be between 1 and 65535.")
+        if agent_port == 11434:
+            errors.append(f"{label} cannot use private Ollama port 11434.")
+    try:
+        if (
+            config.agent_zero_enabled
+            and gateway_port is not None
+            and int(config.agent_zero_port) == gateway_port
+        ):
+            errors.append("Agent Zero local UI port must be different from the gateway port.")
+    except (TypeError, ValueError):
+        pass
     if config.accelerator not in ACCELERATOR_CHOICES:
         errors.append("Choose a valid accelerator profile.")
     if (system or platform.system()).lower().startswith("win") and config.accelerator == "amd":
@@ -300,6 +364,11 @@ def build_env_updates(
     chatterbox_model_map: dict[str, str] | None = None,
 ) -> dict[str, str]:
     ensure_valid_config(config, model_map, whisper_model_map=whisper_model_map, chatterbox_model_map=chatterbox_model_map)
+    model_aliases = list(config.models)
+    if config.agent_zero_enabled:
+        for alias in ("agent", "agent-utility"):
+            if alias in model_map and alias not in model_aliases:
+                model_aliases.append(alias)
     return {
         "OLLAMA_BASE_URL": "http://127.0.0.1:11434",
         "HOST": "127.0.0.1",
@@ -309,8 +378,11 @@ def build_env_updates(
         "WHISPER_DEVICE": "auto",
         "CHATTERBOX_MODEL": config.chatterbox_model,
         "CHATTERBOX_DEVICE": "auto",
-        "OLLAMA_MODELS": " ".join(selected_model_tags(model_map, config.models)),
+        "OLLAMA_MODELS": " ".join(selected_model_tags(model_map, model_aliases)),
         "ENABLE_ARBITRARY_MODELS": "false",
+        "AGENT_ZERO_ENABLED": "true" if config.agent_zero_enabled else "false",
+        "AGENT_ZERO_PORT": str(config.agent_zero_port),
+        "AGENT_ZERO_TAILSCALE_HTTPS_PORT": str(config.agent_zero_tailscale_https_port),
         "ENABLE_API_KEY_AUTH": "true" if config.enable_api_key_auth else "false",
         "API_KEY": config.api_key.strip() if config.enable_api_key_auth else "",
     }
@@ -387,6 +459,8 @@ def build_install_command(repo_root: Path, config: InstallConfig, system: str | 
             command.append("-SkipRepoSync")
         if not config.configure_tailscale:
             command.append("-SkipTailscaleServe")
+        if config.agent_zero_enabled:
+            command.append("-AgentZero")
         command.extend(
             [
                 "-UpdateSchedule",
@@ -464,6 +538,9 @@ def install_or_update(repo_root: Path, config: InstallConfig, log: LogFn) -> Non
     run_process(build_install_command(repo_root, config), repo_root, log)
     log("Install/update complete.")
     log(f"Gateway: http://127.0.0.1:{config.port}/")
+    if config.agent_zero_enabled:
+        log(f"Agent Zero: http://127.0.0.1:{config.agent_zero_port}/")
+        log(f"Agent Zero over Tailscale Serve: https://<machine>.ts.net:{config.agent_zero_tailscale_https_port}/")
 
 
 def run_gui() -> None:
@@ -490,6 +567,7 @@ def run_gui() -> None:
             self.sync_repo_var = tk.BooleanVar(value=initial_config.sync_repo)
             self.auth_var = tk.BooleanVar(value=initial_config.enable_api_key_auth)
             self.api_key_var = tk.StringVar(value=initial_config.api_key)
+            self.agent_zero_var = tk.BooleanVar(value=initial_config.agent_zero_enabled)
             self.whisper_model_var = tk.StringVar(value=initial_config.whisper_model)
             schedule_label = SCHEDULE_LABELS.get(initial_config.update_schedule, SCHEDULE_LABELS["default"])
             self.schedule_var = tk.StringVar(value=schedule_label)
@@ -574,20 +652,29 @@ def run_gui() -> None:
             ).grid(row=2, column=0, columnspan=2, sticky="w", pady=2)
             ttk.Checkbutton(
                 gateway_frame,
+                text="Install Agent Zero UI on 127.0.0.1:50080 and Tailscale HTTPS port 8443",
+                variable=self.agent_zero_var,
+            ).grid(row=3, column=0, columnspan=2, sticky="w", pady=2)
+            ttk.Label(
+                gateway_frame,
+                text="Use Tailscale Serve for Agent Zero. Do not enable its public Remote Link or tunnel options.",
+            ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 6))
+            ttk.Checkbutton(
+                gateway_frame,
                 text="Sync repository before install/update",
                 variable=self.sync_repo_var,
-            ).grid(row=3, column=0, columnspan=2, sticky="w", pady=2)
+            ).grid(row=5, column=0, columnspan=2, sticky="w", pady=2)
             ttk.Checkbutton(
                 gateway_frame,
                 text="Enable optional bearer-token auth",
                 variable=self.auth_var,
-            ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 2))
-            ttk.Label(gateway_frame, text="API key").grid(row=5, column=0, sticky="w", pady=2)
+            ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 2))
+            ttk.Label(gateway_frame, text="API key").grid(row=7, column=0, sticky="w", pady=2)
             ttk.Entry(gateway_frame, textvariable=self.api_key_var, width=52, show="*").grid(
-                row=5, column=1, sticky="w", pady=2
+                row=7, column=1, sticky="w", pady=2
             )
             ttk.Button(gateway_frame, text="Generate key", command=self._generate_api_key).grid(
-                row=5, column=2, sticky="w", padx=(8, 0), pady=2
+                row=7, column=2, sticky="w", padx=(8, 0), pady=2
             )
 
             schedule_frame = ttk.LabelFrame(self, text="Repository auto-updates", padding=10)
@@ -670,6 +757,9 @@ def run_gui() -> None:
                 chatterbox_model=initial_config.chatterbox_model,
                 enable_api_key_auth=self.auth_var.get(),
                 api_key=self.api_key_var.get().strip(),
+                agent_zero_enabled=self.agent_zero_var.get(),
+                agent_zero_port=50080,
+                agent_zero_tailscale_https_port=8443,
             )
 
         def _save_settings(self) -> None:

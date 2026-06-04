@@ -11,7 +11,7 @@ from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ..config import settings
-from ..normalize import MODEL_MAP, resolve_model
+from ..normalize import MODEL_MAP, required_model_aliases, resolve_model
 
 router = APIRouter()
 
@@ -122,7 +122,8 @@ async def _fetch_ollama_tags() -> tuple[dict[str, Any], list[dict[str, Any]]]:
 def _profile_statuses(ollama_models: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_name = {_model_name(model): model for model in ollama_models if _model_name(model)}
     profiles: list[dict[str, Any]] = []
-    for alias, resolved_model in MODEL_MAP.items():
+    for alias in required_model_aliases(settings.agent_zero_enabled):
+        resolved_model = MODEL_MAP[alias]
         model = by_name.get(resolved_model)
         profiles.append(
             {
@@ -151,6 +152,7 @@ def _runtime_status() -> dict[str, Any]:
         "default_model_profile": settings.default_model_profile,
         "default_whisper_model": settings.default_whisper_model,
         "chatterbox_model": settings.chatterbox_model,
+        "agent_zero_enabled": settings.agent_zero_enabled,
         "api_key_auth_enabled": settings.enable_api_key_auth,
         "arbitrary_models_enabled": settings.enable_arbitrary_models,
         "request_timeout_seconds": settings.request_timeout_seconds,
@@ -855,6 +857,7 @@ _STATUS_HTML = """<!doctype html>
         ["Listen", `${data.gateway.host}:${data.gateway.port}`],
         ["Whisper", data.gateway.default_whisper_model],
         ["TTS", data.gateway.chatterbox_model],
+        ["Agent Zero", data.gateway.agent_zero_enabled ? "enabled" : "disabled"],
         ["Python", data.gateway.python],
         ["Platform", data.gateway.platform],
         ["API key auth", data.gateway.api_key_auth_enabled ? "enabled" : "disabled"],

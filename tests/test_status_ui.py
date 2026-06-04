@@ -7,6 +7,8 @@ import httpx
 import pytest
 import respx
 
+from gateway.config import Settings
+
 pytestmark = pytest.mark.asyncio
 OLLAMA_BASE = "http://127.0.0.1:11434"
 
@@ -81,6 +83,54 @@ class TestStatusJson:
         assert body["status"] == "degraded"
         assert dev["model"] == "qwen3.5:0.8b"
         assert dev["status"] == "missing"
+
+    async def test_agent_zero_profiles_are_required_when_enabled(
+        self,
+        client: httpx.AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        import gateway.routes.status as status_module
+
+        enabled_settings = Settings(
+            ollama_base_url=OLLAMA_BASE,
+            enable_api_key_auth=False,
+            api_key="",
+            enable_arbitrary_models=False,
+            request_timeout_seconds=10,
+            max_request_body_bytes=10_485_760,
+            agent_zero_enabled=True,
+        )
+        monkeypatch.setattr(status_module, "settings", enabled_settings)
+
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.get("/api/tags").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "models": [
+                            _ollama_model("qwen3.5:9b"),
+                            _ollama_model("qwen3.5:4b"),
+                            _ollama_model("qwen3.5:0.8b"),
+                        ]
+                    },
+                )
+            )
+            resp = await client.get("/status.json")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "degraded"
+        assert body["gateway"]["agent_zero_enabled"] is True
+        assert {model["alias"] for model in body["models"]} == {
+            "main",
+            "small",
+            "dev",
+            "agent",
+            "agent-utility",
+        }
+        agent = next(model for model in body["models"] if model["alias"] == "agent")
+        assert agent["model"] == "qwen3:14b"
+        assert agent["status"] == "missing"
 
     async def test_ollama_error_returns_degraded_status(self, client: httpx.AsyncClient):
         with respx.mock(base_url=OLLAMA_BASE) as mock:

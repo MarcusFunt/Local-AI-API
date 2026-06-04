@@ -1,0 +1,24 @@
+services:
+  agent-zero:
+    image: agent0ai/agent-zero:${AGENT_ZERO_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      API_KEY_OTHER: ${API_KEY:-unused}
+      A0_SET__model_config__chat_model__provider: other
+      A0_SET__model_config__chat_model__name: agent
+      A0_SET__model_config__chat_model__api_base: http://host.docker.internal:8080/v1
+      A0_SET__model_config__utility_model__provider: other
+      A0_SET__model_config__utility_model__name: agent-utility
+      A0_SET__model_config__utility_model__api_base: http://host.docker.internal:8080/v1
+    volumes:
+      - agent-zero-data:/a0/usr
+    ports:
+      - "127.0.0.1:${AGENT_ZERO_PORT:-50080}:80"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    labels:
+      local-ai-api.component: agent-zero
+
+volumes:
+  agent-zero-data:

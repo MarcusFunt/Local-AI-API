@@ -16,6 +16,7 @@ COMPOSE_VARIANTS = {
     "nvidia": ["compose.yaml", "compose.gpu-nvidia.yaml"],
     "amd": ["compose.yaml", "compose.gpu-amd.yaml"],
 }
+AGENT_ZERO_COMPOSE_FILES = ["compose.yaml", "compose.cpu.yaml", "compose.agent-zero.yaml"]
 SHELL_SCRIPTS = [
     "scripts/setup-docker.sh",
     "scripts/install-or-update.sh",
@@ -36,7 +37,15 @@ def _compose_config(files: list[str]) -> dict:
         pytest.skip("docker is not installed")
 
     env = os.environ.copy()
-    for key in ("INSTALL_AUDIO", "OLLAMA_MODELS", "WHISPER_CACHE_DIR"):
+    for key in (
+        "INSTALL_AUDIO",
+        "OLLAMA_MODELS",
+        "WHISPER_CACHE_DIR",
+        "AGENT_ZERO_ENABLED",
+        "AGENT_ZERO_PORT",
+        "AGENT_ZERO_IMAGE_TAG",
+        "API_KEY",
+    ):
         env.pop(key, None)
 
     command = ["docker", "compose"]
@@ -62,7 +71,7 @@ def test_compose_config_is_valid_for_accelerator_variants(variant: str, files: l
     assert config["services"]["ollama"]["labels"]["local-ai-api.accelerator"] == variant
 
 
-@pytest.mark.parametrize("files", COMPOSE_VARIANTS.values())
+@pytest.mark.parametrize("files", [*COMPOSE_VARIANTS.values(), AGENT_ZERO_COMPOSE_FILES])
 def test_compose_does_not_publish_raw_ollama_port(files: list[str]):
     config = _compose_config(files)
 
@@ -131,6 +140,36 @@ def test_only_gateway_port_is_published_on_loopback(files: list[str]):
             )
 
     assert published_ports == [("ollama", "127.0.0.1", "8080", 8080)]
+
+
+def test_agent_zero_compose_publishes_ui_only_on_loopback():
+    config = _compose_config(AGENT_ZERO_COMPOSE_FILES)
+
+    agent_zero = config["services"]["agent-zero"]
+    assert agent_zero["image"] == "agent0ai/agent-zero:latest"
+    assert agent_zero["environment"]["API_KEY_OTHER"] == "unused"
+    assert agent_zero["environment"]["A0_SET__model_config__chat_model__provider"] == "other"
+    assert agent_zero["environment"]["A0_SET__model_config__chat_model__name"] == "agent"
+    assert (
+        agent_zero["environment"]["A0_SET__model_config__chat_model__api_base"]
+        == "http://host.docker.internal:8080/v1"
+    )
+    assert agent_zero["environment"]["A0_SET__model_config__utility_model__name"] == "agent-utility"
+    assert agent_zero["ports"] == [
+        {
+            "host_ip": "127.0.0.1",
+            "mode": "ingress",
+            "protocol": "tcp",
+            "published": "50080",
+            "target": 80,
+        }
+    ]
+    assert {
+        "type": "volume",
+        "source": "agent-zero-data",
+        "target": "/a0/usr",
+        "volume": {},
+    } in agent_zero["volumes"]
 
 
 @pytest.mark.parametrize("script", SHELL_SCRIPTS)

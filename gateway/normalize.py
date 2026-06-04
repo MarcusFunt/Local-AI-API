@@ -6,10 +6,17 @@ MODEL_MAP: dict[str, str] = {
     "main": "qwen3.5:9b",
     "small": "qwen3.5:4b",
     "dev": "qwen3.5:0.8b",
+    "agent": "qwen3:14b",
+    "agent-utility": "qwen3:8b",
 }
+
+CORE_MODEL_ALIASES = ("main", "small", "dev")
+AGENT_ZERO_MODEL_ALIASES = ("agent", "agent-utility")
 
 # Direct model tags that are always accepted (same values as map targets)
 _ALLOWED_DIRECT = set(MODEL_MAP.values())
+
+_SAFE_PROVIDER_PREFIXES = ("openai/",)
 
 WHISPER_MODEL_MAP: dict[str, str | None] = {
     "none": None,
@@ -22,6 +29,29 @@ CHATTERBOX_MODEL_MAP: dict[str, str] = {
     "chatterbox": "chatterbox",
     "chatterbox-multilingual": "chatterbox-multilingual",
 }
+
+
+def strip_safe_provider_prefix(requested: str) -> str:
+    requested = requested.strip()
+    lowered = requested.lower()
+    for prefix in _SAFE_PROVIDER_PREFIXES:
+        if lowered.startswith(prefix):
+            return requested[len(prefix):].strip()
+    return requested
+
+
+def required_model_aliases(agent_zero_enabled: bool) -> tuple[str, ...]:
+    if agent_zero_enabled:
+        return CORE_MODEL_ALIASES + AGENT_ZERO_MODEL_ALIASES
+    return CORE_MODEL_ALIASES
+
+
+def allowed_model_ids() -> list[str]:
+    ids: list[str] = []
+    for value in [*MODEL_MAP.keys(), *MODEL_MAP.values()]:
+        if value not in ids:
+            ids.append(value)
+    return ids
 
 
 def resolve_model(requested: str, settings: Settings) -> str:
@@ -38,14 +68,16 @@ def resolve_model(requested: str, settings: Settings) -> str:
             },
         )
 
-    if requested in MODEL_MAP:
-        return MODEL_MAP[requested]
+    normalized = strip_safe_provider_prefix(requested)
 
-    if requested in _ALLOWED_DIRECT:
-        return requested
+    if normalized in MODEL_MAP:
+        return MODEL_MAP[normalized]
+
+    if normalized in _ALLOWED_DIRECT:
+        return normalized
 
     if settings.enable_arbitrary_models:
-        return requested
+        return normalized
 
     raise HTTPException(
         status_code=422,
