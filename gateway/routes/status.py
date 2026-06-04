@@ -365,13 +365,18 @@ _STATUS_HTML = """<!doctype html>
     }
 
     .top-row {
-      justify-content: space-between;
+      display: grid;
+      grid-template-columns: minmax(250px, 1fr) auto minmax(250px, 1fr);
       gap: 18px;
     }
 
     .brand {
       min-width: 0;
       gap: 12px;
+    }
+
+    .brand-copy {
+      min-width: 0;
     }
 
     .brand h1 {
@@ -381,13 +386,50 @@ _STATUS_HTML = """<!doctype html>
       letter-spacing: 0;
     }
 
+    .brand p {
+      margin: 3px 0 0;
+      color: var(--subtle);
+      font-size: 12px;
+      font-weight: 650;
+      line-height: 1.2;
+    }
+
     .brand-mark {
-      width: 11px;
-      height: 31px;
-      border-radius: 999px;
-      background: var(--green);
-      box-shadow: 0 0 22px rgba(56, 217, 137, 0.46);
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border: 1px solid rgba(56, 217, 137, 0.28);
+      border-radius: 9px;
+      background: rgba(56, 217, 137, 0.09);
+      box-shadow: 0 0 26px rgba(56, 217, 137, 0.24);
       flex: 0 0 auto;
+    }
+
+    .brand-mark::before {
+      content: "";
+      width: 13px;
+      height: 13px;
+      border-radius: 5px;
+      background: #27e0bd;
+      box-shadow: 0 0 18px rgba(39, 224, 189, 0.72);
+    }
+
+    .status-path {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      min-width: 0;
+      color: var(--muted);
+      font-weight: 750;
+      white-space: nowrap;
+    }
+
+    .status-path .slash {
+      color: var(--subtle);
+      font-size: 18px;
+      font-weight: 650;
     }
 
     .top-meta {
@@ -397,22 +439,6 @@ _STATUS_HTML = """<!doctype html>
       color: var(--muted);
       font-size: 13px;
       white-space: nowrap;
-    }
-
-    .active-tab {
-      min-height: 32px;
-      gap: 8px;
-      padding: 0 10px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background: var(--panel-soft);
-      color: var(--muted);
-      font-weight: 700;
-    }
-
-    .active-tab strong {
-      color: var(--text);
-      font-weight: 750;
     }
 
     .button {
@@ -460,10 +486,12 @@ _STATUS_HTML = """<!doctype html>
       gap: 6px;
       overflow-x: auto;
       padding-bottom: 2px;
+      border-bottom: 1px solid var(--border);
       scrollbar-width: thin;
     }
 
     .tab {
+      position: relative;
       min-height: 34px;
       padding: 6px 12px;
       border: 1px solid transparent;
@@ -484,8 +512,36 @@ _STATUS_HTML = """<!doctype html>
 
     .tab[aria-selected="true"] {
       color: var(--text);
-      border-color: var(--border-strong);
-      background: var(--panel-soft);
+      border-color: transparent;
+      background: transparent;
+    }
+
+    .tab[aria-selected="true"]::after {
+      content: "";
+      position: absolute;
+      right: 10px;
+      bottom: -3px;
+      left: 10px;
+      height: 2px;
+      border-radius: 999px;
+      background: #27e0bd;
+      box-shadow: 0 0 12px rgba(39, 224, 189, 0.5);
+    }
+
+    .tab-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 19px;
+      min-height: 19px;
+      margin-left: 5px;
+      padding: 0 6px;
+      border: 1px solid rgba(243, 180, 75, 0.32);
+      border-radius: 999px;
+      color: var(--amber);
+      background: var(--amber-bg);
+      font-size: 11px;
+      font-weight: 850;
     }
 
     main {
@@ -510,7 +566,7 @@ _STATUS_HTML = """<!doctype html>
 
     .content-grid {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(320px, 0.42fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 14px;
       align-items: start;
     }
@@ -524,7 +580,7 @@ _STATUS_HTML = """<!doctype html>
     }
 
     .metric {
-      min-height: 150px;
+      min-height: 188px;
       padding: 15px;
       border-top: 3px solid var(--neutral);
     }
@@ -545,21 +601,63 @@ _STATUS_HTML = """<!doctype html>
       border-top-color: var(--neutral);
     }
 
+    .metric-header,
+    .metric-footer,
+    .inline-row {
+      display: flex;
+      align-items: center;
+    }
+
+    .metric-header {
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 13px;
+    }
+
     .metric h2,
     .panel h2 {
       margin: 0;
-      font-size: 15px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 850;
       line-height: 1.2;
       letter-spacing: 0;
+      text-transform: uppercase;
     }
 
-    .metric .value {
-      display: block;
-      margin-top: 10px;
+    .metric h2::before,
+    .panel h2::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--neutral);
+      box-shadow: 0 0 10px currentColor;
+    }
+
+    .metric[data-state="good"] h2::before,
+    .panel.good h2::before {
+      background: var(--green);
+    }
+
+    .metric[data-state="warn"] h2::before,
+    .panel.warn h2::before {
+      background: var(--amber);
+    }
+
+    .metric[data-state="bad"] h2::before,
+    .panel.bad h2::before {
+      background: var(--red);
+    }
+
+    .metric-primary {
+      margin-bottom: 12px;
       color: var(--text);
-      font-size: 24px;
-      font-weight: 800;
-      line-height: 1.1;
+      font-size: 13px;
+      font-weight: 750;
       overflow-wrap: anywhere;
     }
 
@@ -568,6 +666,97 @@ _STATUS_HTML = """<!doctype html>
       grid-template-columns: minmax(90px, 0.45fr) minmax(0, 1fr);
       gap: 6px 12px;
       margin: 14px 0 0;
+    }
+
+    .metric-footer {
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 13px;
+      padding-top: 11px;
+      border-top: 1px solid rgba(36, 49, 65, 0.72);
+    }
+
+    .overview-counts,
+    .flag-grid,
+    .panel-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .overview-counts {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin: 4px 0 12px;
+    }
+
+    .flag-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .count-tile,
+    .flag-card {
+      min-width: 0;
+      padding: 10px;
+      border: 1px solid rgba(49, 66, 85, 0.72);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.018);
+    }
+
+    .count-tile strong {
+      display: block;
+      color: var(--text);
+      font-size: 22px;
+      line-height: 1;
+    }
+
+    .count-tile span,
+    .flag-card span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
+
+    .metric-link {
+      flex: 0 0 auto;
+      padding: 0;
+      border: 0;
+      color: #32dac2;
+      background: transparent;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .metric-link:hover {
+      color: #8ff7ea;
+    }
+
+    .metric-footer .muted {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .inline-row {
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .panel-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .panel-grid.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .span-2 {
+      grid-column: span 2;
+    }
+
+    .span-3 {
+      grid-column: span 3;
     }
 
     .panel {
@@ -776,7 +965,10 @@ _STATUS_HTML = """<!doctype html>
     }
 
     @media (max-width: 1060px) {
-      .overview-grid,
+      .overview-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
       .content-grid {
         grid-template-columns: 1fr;
       }
@@ -789,14 +981,18 @@ _STATUS_HTML = """<!doctype html>
 
       .top-row {
         align-items: flex-start;
-        flex-direction: column;
+        grid-template-columns: 1fr;
       }
 
       .top-meta {
         width: 100%;
-        justify-content: flex-start;
+        justify-content: space-between;
         flex-wrap: wrap;
         white-space: normal;
+      }
+
+      .status-path {
+        justify-content: flex-start;
       }
 
       main {
@@ -812,6 +1008,10 @@ _STATUS_HTML = """<!doctype html>
         gap: 10px;
       }
 
+      .overview-grid {
+        grid-template-columns: 1fr;
+      }
+
       .metric,
       .panel-body {
         padding: 12px;
@@ -819,9 +1019,20 @@ _STATUS_HTML = """<!doctype html>
 
       .metric dl,
       .kv,
-      .kv.compact {
+      .kv.compact,
+      .panel-grid,
+      .panel-grid.three {
         grid-template-columns: 1fr;
         gap: 5px;
+      }
+
+      .overview-counts {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .span-2,
+      .span-3 {
+        grid-column: auto;
       }
 
       th,
@@ -848,23 +1059,29 @@ _STATUS_HTML = """<!doctype html>
       <div class="top-row">
         <div class="brand">
           <span class="brand-mark" aria-hidden="true"></span>
-          <h1>Local AI API</h1>
+          <div class="brand-copy">
+            <h1>Local AI API</h1>
+            <p>OpenAI-compatible gateway &middot; Ollama</p>
+          </div>
+        </div>
+        <div class="status-path" aria-label="Current dashboard status and tab">
           <span id="global-status" class="status-pill neutral">Loading</span>
+          <span class="slash" aria-hidden="true">/</span>
+          <span id="active-tab-label">Overview</span>
         </div>
         <div class="top-meta">
-          <span class="active-tab">Tab <strong id="active-tab-label">Overview</strong></span>
+          <span id="last-updated">updated --</span>
           <button class="button" id="refresh" type="button" aria-label="Refresh status">
             <span aria-hidden="true">&#8635;</span>
             Refresh
           </button>
-          <span id="last-updated">Last updated: --</span>
         </div>
       </div>
       <nav class="tablist" role="tablist" aria-label="Status dashboard tabs">
         <button class="tab" id="tab-overview" type="button" role="tab" aria-selected="true" aria-controls="panel-overview" data-tab="overview">Overview</button>
-        <button class="tab" id="tab-models" type="button" role="tab" aria-selected="false" aria-controls="panel-models" data-tab="models">Models</button>
+        <button class="tab" id="tab-models" type="button" role="tab" aria-selected="false" aria-controls="panel-models" data-tab="models">Models <span class="tab-badge" id="models-tab-badge" hidden>0</span></button>
         <button class="tab" id="tab-checks" type="button" role="tab" aria-selected="false" aria-controls="panel-checks" data-tab="checks">Checks</button>
-        <button class="tab" id="tab-update" type="button" role="tab" aria-selected="false" aria-controls="panel-update" data-tab="update">Update</button>
+        <button class="tab" id="tab-update" type="button" role="tab" aria-selected="false" aria-controls="panel-update" data-tab="update">Update <span class="tab-badge" id="update-tab-badge" hidden>0</span></button>
         <button class="tab" id="tab-runtime" type="button" role="tab" aria-selected="false" aria-controls="panel-runtime" data-tab="runtime">Runtime</button>
         <button class="tab" id="tab-audio" type="button" role="tab" aria-selected="false" aria-controls="panel-audio" data-tab="audio">Audio</button>
         <button class="tab" id="tab-settings" type="button" role="tab" aria-selected="false" aria-controls="panel-settings" data-tab="settings">Settings</button>
@@ -965,37 +1182,16 @@ _STATUS_HTML = """<!doctype html>
       </section>
 
       <section class="tab-panel" id="panel-runtime" role="tabpanel" aria-labelledby="tab-runtime" hidden>
-        <article class="panel">
-          <header>
-            <h2>Runtime</h2>
-          </header>
-          <div class="panel-body">
-            <dl class="kv" id="runtime-state"></dl>
-          </div>
-        </article>
+        <div class="panel-grid" id="runtime-state"></div>
       </section>
 
       <section class="tab-panel" id="panel-audio" role="tabpanel" aria-labelledby="tab-audio" hidden>
-        <article class="panel">
-          <header>
-            <h2>Audio</h2>
-          </header>
-          <div class="panel-body">
-            <dl class="kv" id="audio-state"></dl>
-          </div>
-        </article>
+        <div class="panel-grid" id="audio-state"></div>
       </section>
 
       <section class="tab-panel" id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
-        <article class="panel">
-          <header>
-            <h2>Settings</h2>
-            <span class="status-pill neutral">Read only</span>
-          </header>
-          <div class="panel-body">
-            <dl class="kv" id="settings-state"></dl>
-          </div>
-        </article>
+        <div class="empty" style="margin-bottom:14px;">Read-only configuration is managed on the host. Editable settings can be added when write endpoints exist.</div>
+        <div class="panel-grid three" id="settings-state"></div>
       </section>
     </main>
   </div>
@@ -1009,6 +1205,8 @@ _STATUS_HTML = """<!doctype html>
       lastUpdated: document.querySelector("#last-updated"),
       refresh: document.querySelector("#refresh"),
       overviewGrid: document.querySelector("#overview-grid"),
+      modelsTabBadge: document.querySelector("#models-tab-badge"),
+      updateTabBadge: document.querySelector("#update-tab-badge"),
       modelsCount: document.querySelector("#models-count"),
       modelsBody: document.querySelector("#models-body"),
       checksBody: document.querySelector("#checks-body"),
@@ -1109,6 +1307,18 @@ _STATUS_HTML = """<!doctype html>
       return `${ms} ms`;
     }
 
+    function fmtBytes(bytes) {
+      if (!Number.isFinite(bytes)) return "--";
+      const units = ["B", "KiB", "MiB", "GiB"];
+      let value = bytes;
+      let unit = 0;
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+      }
+      return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+    }
+
     function kvRows(rows) {
       return rows.map(([label, value, options = {}]) => {
         const className = options.className ? ` class="${options.className}"` : "";
@@ -1117,13 +1327,58 @@ _STATUS_HTML = """<!doctype html>
       }).join("");
     }
 
-    function metric({ title, status, value, rows }) {
+    function countTiles(items) {
+      return `
+        <div class="overview-counts">
+          ${items.map(([value, label]) => `
+            <div class="count-tile">
+              <strong>${escapeHtml(value)}</strong>
+              <span>${escapeHtml(label)}</span>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function tabLink(tab, label) {
+      return `<button class="metric-link" type="button" data-open-tab="${escapeHtml(tab)}">${escapeHtml(label)}</button>`;
+    }
+
+    function metric({ title, status, statusLabel, value, rows = [], bodyHtml = "", footerHtml = "" }) {
       return `
         <article class="metric" data-state="${statusKind(status)}">
-          <h2>${escapeHtml(title)}</h2>
-          <span class="value">${escapeHtml(value ?? "--")}</span>
-          <dl>${kvRows(rows)}</dl>
+          <div class="metric-header">
+            <h2>${escapeHtml(title)}</h2>
+            ${pill(status, statusLabel ?? titleCase(status))}
+          </div>
+          ${value ? `<div class="metric-primary">${escapeHtml(value)}</div>` : ""}
+          ${bodyHtml || `<dl class="kv compact">${kvRows(rows)}</dl>`}
+          ${footerHtml ? `<div class="metric-footer">${footerHtml}</div>` : ""}
         </article>
+      `;
+    }
+
+    function panelBlock({ title, status = "idle", statusLabel, rows = [], bodyHtml = "", span = "" }) {
+      const spanClass = span ? ` ${span}` : "";
+      return `
+        <article class="panel ${statusKind(status)}${spanClass}">
+          <header>
+            <h2>${escapeHtml(title)}</h2>
+            ${statusLabel ? pill(status, statusLabel) : ""}
+          </header>
+          <div class="panel-body">
+            ${bodyHtml || `<dl class="kv">${kvRows(rows)}</dl>`}
+          </div>
+        </article>
+      `;
+    }
+
+    function flagCard(label, enabled) {
+      return `
+        <div class="flag-card">
+          ${pill(enabled ? "enabled" : "disabled", enabledText(enabled))}
+          <span>${escapeHtml(label)}</span>
+        </div>
       `;
     }
 
@@ -1156,6 +1411,19 @@ _STATUS_HTML = """<!doctype html>
       return ["idle", "Idle"];
     }
 
+    function renderTabBadges(data) {
+      const models = data.models ?? [];
+      const missingModels = models.filter((model) => model.status !== "ready").length;
+      els.modelsTabBadge.hidden = missingModels === 0;
+      els.modelsTabBadge.textContent = missingModels;
+
+      const repo = data.repository;
+      const repoStatus = deriveRepoStatus(repo);
+      const showUpdateBadge = repoStatus === "running" || repoStatus === "failed" || repo?.last_update?.restart_recommended;
+      els.updateTabBadge.hidden = !showUpdateBadge;
+      els.updateTabBadge.textContent = repoStatus === "running" ? "run" : "!";
+    }
+
     function setActiveTab(tab) {
       if (!TABS.includes(tab)) tab = "overview";
       activeTab = tab;
@@ -1183,43 +1451,86 @@ _STATUS_HTML = """<!doctype html>
       const repo = data.repository;
       const repoStatus = deriveRepoStatus(repo);
       const repoUpdate = updateResult(repo);
+      const gateway = data.gateway ?? {};
+      const ollama = data.ollama ?? {};
+      const authLabel = gateway.api_key_auth_enabled ? "enabled" : "disabled";
 
       els.overviewGrid.innerHTML = [
         metric({
-          title: "Gateway status",
-          status: data.gateway?.status ?? "unknown",
-          value: data.gateway?.status === "ok" ? "Healthy" : titleCase(data.gateway?.status),
-          rows: [["Uptime", fmtDuration(data.gateway?.uptime_seconds)], ["Listen", `${data.gateway?.host ?? "--"}:${data.gateway?.port ?? "--"}`]],
+          title: "Gateway",
+          status: gateway.status ?? "unknown",
+          statusLabel: gateway.status === "ok" ? "Ok" : titleCase(gateway.status),
+          rows: [
+            ["Listen", `${gateway.host ?? "--"}:${gateway.port ?? "--"}`],
+            ["OpenAI compatible", "yes"],
+            ["Uptime", fmtDuration(gateway.uptime_seconds)],
+            ["Request timeout", `${gateway.request_timeout_seconds ?? "--"}s`],
+          ],
+          footerHtml: `<span class="muted">Auth ${escapeHtml(authLabel)}</span>${tabLink("runtime", "Open Runtime ->")}`,
         }),
         metric({
-          title: "Ollama status",
-          status: data.ollama?.status ?? "unknown",
-          value: data.ollama?.status === "ok" ? "Connected" : "Unavailable",
-          rows: [["Endpoint", data.ollama?.base_url], ["Latency", fmtMs(data.ollama?.latency_ms)]],
+          title: "Ollama",
+          status: ollama.status ?? "unknown",
+          statusLabel: ollama.status === "ok" ? "Ok" : "Error",
+          rows: [
+            ["Backend", ollama.base_url],
+            ["Loaded models", ollama.models_count ?? "--"],
+            ["Latency", fmtMs(ollama.latency_ms)],
+            ["Error", ollama.error ?? "--"],
+          ],
+          footerHtml: `<span class="muted">Loopback only</span>${tabLink("checks", "Open Checks ->")}`,
         }),
         metric({
-          title: "Models ready/missing",
+          title: "Models",
           status: missingModels === 0 ? "ready" : "missing",
-          value: `${readyModels} / ${models.length} ready`,
-          rows: [["Missing", missingModels], ["Dev model", devModel?.status ?? "unknown"]],
+          statusLabel: missingModels === 0 ? "Ready" : "Missing",
+          bodyHtml: `
+            ${countTiles([[readyModels, "ready"], [missingModels, "missing"], [models.length, "aliases"]])}
+            <dl class="kv compact">${kvRows([
+              ["Default profile", gateway.default_model_profile],
+              ["Dev model", devModel?.model ?? "qwen3.5:0.8b"],
+            ])}</dl>
+          `,
+          footerHtml: `<span class="muted">${escapeHtml(devModel?.status ?? "unknown")} dev alias</span>${tabLink("models", "View all ->")}`,
         }),
         metric({
-          title: "Last dev-model check",
+          title: "Dev-model check",
           status: check?.status ?? "unknown",
-          value: check ? titleCase(check.status) : "Not run",
-          rows: [["Model", check?.model ?? devModel?.model ?? "qwen3.5:0.8b"], ["Latency", fmtMs(check?.latency_ms)]],
+          statusLabel: check ? titleCase(check.status) : "Not run",
+          rows: [
+            ["Model", check?.model ?? devModel?.model ?? "qwen3.5:0.8b"],
+            ["Latency", fmtMs(check?.latency_ms)],
+            ["Prompt tokens", check?.prompt_tokens ?? "--"],
+            ["Completion tokens", check?.completion_tokens ?? "--"],
+            ["Checked", fmtTime(check?.checked_at)],
+          ],
+          footerHtml: `<span class="muted">${escapeHtml(check?.response ?? check?.error ?? "No run yet")}</span>${tabLink("checks", "Run/check ->")}`,
         }),
         metric({
-          title: "Repository/update status",
+          title: "Repository",
           status: repoStatus,
-          value: repoUpdate[1].replace(/&hellip;/g, "...").replace(/&mdash;/g, "-"),
-          rows: [["Branch", repo?.branch ?? "--"], ["Head", repo?.head ?? repo?.last_update?.head_after ?? "--"]],
+          statusLabel: repoUpdate[1].replace(/&hellip;/g, "...").replace(/&mdash;/g, "-"),
+          rows: [
+            ["Available", boolText(repo?.available)],
+            ["Branch", repo?.branch ?? repo?.last_update?.branch ?? "--"],
+            ["Head", repo?.head ?? repo?.last_update?.head_after ?? "--"],
+            ["Upstream", repo?.upstream ?? "--"],
+            ["Dirty", boolText(repo?.dirty)],
+          ],
+          footerHtml: `<span class="muted">${escapeHtml(repo?.reason ?? "fast-forward only")}</span>${tabLink("update", "Open Update ->")}`,
         }),
         metric({
-          title: "Runtime basics",
+          title: "Runtime",
           status: "idle",
-          value: data.gateway?.hostname ?? "--",
-          rows: [["Python", data.gateway?.python], ["Platform", data.gateway?.platform]],
+          statusLabel: "Config",
+          rows: [
+            ["Host", gateway.hostname],
+            ["Python", gateway.python],
+            ["Platform", gateway.platform],
+            ["Default profile", gateway.default_model_profile],
+            ["Audio", gateway.default_whisper_model === "none" ? "transcription disabled by default" : gateway.default_whisper_model],
+          ],
+          footerHtml: `<span class="muted">${escapeHtml(fmtBytes(gateway.max_request_body_bytes))} request limit</span>${tabLink("settings", "Open Settings ->")}`,
         }),
       ].join("");
     }
@@ -1325,50 +1636,117 @@ _STATUS_HTML = """<!doctype html>
 
     function renderRuntime(data) {
       const gateway = data.gateway ?? {};
-      els.runtimeState.innerHTML = kvRows([
-        ["Hostname", gateway.hostname],
-        ["Listen host/port", `${gateway.host ?? "--"}:${gateway.port ?? "--"}`],
-        ["Python version", gateway.python],
-        ["Platform", gateway.platform],
-        ["Default model profile", gateway.default_model_profile],
-        ["Default Whisper model", gateway.default_whisper_model],
-        ["Chatterbox model", gateway.chatterbox_model],
-        ["Agent Zero", enabledText(gateway.agent_zero_enabled)],
-        ["API key auth", enabledText(gateway.api_key_auth_enabled)],
-        ["Arbitrary models", enabledText(gateway.arbitrary_models_enabled)],
-        ["Request timeout", `${gateway.request_timeout_seconds ?? "--"} seconds`],
-        ["Max request body size", `${gateway.max_request_body_bytes ?? "--"} bytes`],
-      ]);
+      els.runtimeState.innerHTML = [
+        panelBlock({
+          title: "Host & network",
+          rows: [
+            ["Hostname", gateway.hostname],
+            ["Listen host", gateway.host],
+            ["Listen port", gateway.port],
+            ["Platform", gateway.platform],
+            ["Python version", gateway.python],
+          ],
+        }),
+        panelBlock({
+          title: "Defaults",
+          rows: [
+            ["Default model profile", gateway.default_model_profile],
+            ["Default Whisper model", gateway.default_whisper_model],
+            ["Chatterbox model", gateway.chatterbox_model],
+            ["Request timeout", `${gateway.request_timeout_seconds ?? "--"} seconds`],
+            ["Max request body", fmtBytes(gateway.max_request_body_bytes)],
+          ],
+        }),
+        panelBlock({
+          title: "Feature flags",
+          span: "span-2",
+          bodyHtml: `
+            <div class="flag-grid">
+              ${flagCard("Agent Zero", gateway.agent_zero_enabled)}
+              ${flagCard("API key auth", gateway.api_key_auth_enabled)}
+              ${flagCard("Arbitrary models", gateway.arbitrary_models_enabled)}
+            </div>
+          `,
+        }),
+      ].join("");
     }
 
     function renderAudio(data) {
       const gateway = data.gateway ?? {};
       const whisperDefault = gateway.default_whisper_model ?? "none";
       const transcriptionState = whisperDefault === "none" ? "disabled by default" : "enabled";
-      els.audioState.innerHTML = kvRows([
-        ["Whisper default model", whisperDefault],
-        ["Chatterbox model", gateway.chatterbox_model],
-        ["Transcription default", transcriptionState],
-        ["Audio runtime state", data.audio?.status ?? "not reported"],
-      ]);
+      const whisperStatus = whisperDefault === "none" ? "disabled" : "ready";
+      els.audioState.innerHTML = [
+        panelBlock({
+          title: "Whisper (STT)",
+          status: whisperStatus,
+          statusLabel: whisperDefault === "none" ? "Disabled" : "Ready",
+          rows: [
+            ["Default model", whisperDefault],
+            ["Status", transcriptionState],
+          ],
+        }),
+        panelBlock({
+          title: "Chatterbox (TTS)",
+          status: "ready",
+          statusLabel: "Ready",
+          rows: [
+            ["Model", gateway.chatterbox_model],
+            ["Status", "enabled"],
+          ],
+        }),
+        panelBlock({
+          title: "Audio subsystem",
+          span: "span-2",
+          rows: [
+            ["Audio enabled", data.audio?.enabled === undefined ? "not reported" : boolText(data.audio.enabled)],
+            ["Runtime state", data.audio?.status ?? "not reported"],
+          ],
+        }),
+      ].join("");
     }
 
     function renderSettings(data) {
       const gateway = data.gateway ?? {};
-      els.settingsState.innerHTML = kvRows([
-        ["Service", gateway.service],
-        ["Ollama base URL", data.ollama?.base_url],
-        ["Host", gateway.host],
-        ["Port", gateway.port],
-        ["Default model profile", gateway.default_model_profile],
-        ["Default Whisper model", gateway.default_whisper_model],
-        ["Chatterbox model", gateway.chatterbox_model],
-        ["Agent Zero enabled", boolText(gateway.agent_zero_enabled)],
-        ["API key auth enabled", boolText(gateway.api_key_auth_enabled)],
-        ["Arbitrary models enabled", boolText(gateway.arbitrary_models_enabled)],
-        ["Request timeout seconds", gateway.request_timeout_seconds],
-        ["Max request body bytes", gateway.max_request_body_bytes],
-      ]);
+      els.settingsState.innerHTML = [
+        panelBlock({
+          title: "Gateway",
+          rows: [
+            ["Service", gateway.service],
+            ["Ollama base URL", data.ollama?.base_url],
+            ["Listen", `${gateway.host ?? "--"}:${gateway.port ?? "--"}`],
+            ["OpenAI compatible", "true"],
+          ],
+        }),
+        panelBlock({
+          title: "Models",
+          rows: [
+            ["Default profile", gateway.default_model_profile],
+            ["Arbitrary models", enabledText(gateway.arbitrary_models_enabled)],
+          ],
+        }),
+        panelBlock({
+          title: "Security",
+          rows: [
+            ["API key auth", enabledText(gateway.api_key_auth_enabled)],
+            ["Agent Zero", enabledText(gateway.agent_zero_enabled)],
+          ],
+        }),
+        panelBlock({
+          title: "Limits",
+          rows: [
+            ["Request timeout", `${gateway.request_timeout_seconds ?? "--"}s`],
+            ["Max request body", fmtBytes(gateway.max_request_body_bytes)],
+          ],
+        }),
+        panelBlock({
+          title: "Audio",
+          rows: [
+            ["Whisper model", gateway.default_whisper_model],
+            ["Chatterbox model", gateway.chatterbox_model],
+          ],
+        }),
+      ].join("");
     }
 
     function render(data) {
@@ -1376,7 +1754,8 @@ _STATUS_HTML = """<!doctype html>
       const [overallStatus, overallLabel] = globalStatus(data);
       els.globalStatus.outerHTML = pill(overallStatus, overallLabel).replace("<span", '<span id="global-status"');
       els.globalStatus = document.querySelector("#global-status");
-      els.lastUpdated.textContent = `Last updated: ${fmtShortTime(data.generated_at)}`;
+      els.lastUpdated.textContent = `updated ${fmtShortTime(data.generated_at)}`;
+      renderTabBadges(data);
 
       renderOverview(data);
       renderModels(data);
@@ -1474,6 +1853,11 @@ _STATUS_HTML = """<!doctype html>
 
     els.tabs.forEach((button) => {
       button.addEventListener("click", () => setActiveTab(button.dataset.tab));
+    });
+    document.addEventListener("click", (event) => {
+      const target = event.target.closest("[data-open-tab]");
+      if (!target) return;
+      setActiveTab(target.dataset.openTab);
     });
     window.addEventListener("hashchange", () => setActiveTab(location.hash.replace("#", "")));
     els.refresh.addEventListener("click", refreshStatus);
