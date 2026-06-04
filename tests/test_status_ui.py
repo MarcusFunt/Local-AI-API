@@ -33,10 +33,20 @@ class TestStatusPage:
         assert resp.status_code == 200
         assert "text/html" in resp.headers["content-type"]
         assert "Local AI API" in resp.text
-        assert "End-to-end check" in resp.text
-        assert "App update" in resp.text
+        assert "color-scheme: dark" in resp.text
+        assert 'role="tablist"' in resp.text
+        assert "Overview" in resp.text
+        assert "Models" in resp.text
+        assert "Checks" in resp.text
+        assert "Update" in resp.text
+        assert "Runtime" in resp.text
+        assert "Audio" in resp.text
+        assert "Settings" in resp.text
+        assert 'id="global-status"' in resp.text
+        assert "Update from Git" in resp.text
         assert "/status.json" in resp.text
         assert "/status/update" in resp.text
+        assert "X-Local-AI-Admin-Action" in resp.text
 
     async def test_status_path_renders_same_gui(self, client: httpx.AsyncClient):
         resp = await client.get("/status")
