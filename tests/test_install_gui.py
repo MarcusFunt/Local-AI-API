@@ -51,7 +51,8 @@ def test_env_updates_keep_ollama_private_and_select_models(installer):
     assert updates["OLLAMA_BASE_URL"] == "http://127.0.0.1:11434"
     assert updates["HOST"] == "127.0.0.1"
     assert updates["ENABLE_ARBITRARY_MODELS"] == "false"
-    assert updates["OLLAMA_MODELS"] == "qwen3.5:4b qwen3.5:0.8b"
+    assert updates["AGENT_ZERO_ENABLED"] == "true"
+    assert updates["OLLAMA_MODELS"] == "qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b"
     assert updates["DEFAULT_WHISPER_MODEL"] == "none"
     assert updates["CHATTERBOX_MODEL"] == "chatterbox"
 
@@ -68,11 +69,10 @@ def test_env_updates_can_select_whisper_model(installer):
     assert updates["DEFAULT_WHISPER_MODEL"] == "base"
 
 
-def test_env_updates_agent_zero_adds_required_models(installer):
+def test_env_updates_always_adds_agent_zero_required_models(installer):
     config = installer.InstallConfig(
         models=["dev"],
         default_profile="dev",
-        agent_zero_enabled=True,
     )
 
     updates = installer.build_env_updates(config, MODEL_MAP)

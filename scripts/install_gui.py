@@ -80,7 +80,7 @@ class InstallConfig:
     chatterbox_model: str = "chatterbox"
     enable_api_key_auth: bool = False
     api_key: str = ""
-    agent_zero_enabled: bool = False
+    agent_zero_enabled: bool = True
     agent_zero_port: int = 50080
     agent_zero_tailscale_https_port: int = 8443
 
@@ -195,7 +195,7 @@ def load_previous_config(
         config.chatterbox_model = env_values["CHATTERBOX_MODEL"]
     if env_values.get("PORT", "").isdigit():
         config.port = int(env_values["PORT"])
-    config.agent_zero_enabled = _env_bool(env_values.get("AGENT_ZERO_ENABLED"))
+    config.agent_zero_enabled = True
     if env_values.get("AGENT_ZERO_PORT", "").isdigit():
         config.agent_zero_port = int(env_values["AGENT_ZERO_PORT"])
     if env_values.get("AGENT_ZERO_TAILSCALE_HTTPS_PORT", "").isdigit():
@@ -275,14 +275,13 @@ def validate_config(
         errors.append("Choose a valid default model profile.")
     elif config.default_profile not in selected:
         errors.append("The default model profile must also be selected for installation.")
-    if config.agent_zero_enabled:
-        missing_agent_aliases = {"agent", "agent-utility"} - set(model_map)
-        if missing_agent_aliases:
-            errors.append(
-                "Agent Zero requires model aliases: "
-                + ", ".join(sorted(missing_agent_aliases))
-                + "."
-            )
+    missing_agent_aliases = {"agent", "agent-utility"} - set(model_map)
+    if missing_agent_aliases:
+        errors.append(
+            "Agent Zero requires model aliases: "
+            + ", ".join(sorted(missing_agent_aliases))
+            + "."
+        )
     gateway_port: int | None = None
     try:
         gateway_port = int(config.port)
@@ -307,11 +306,7 @@ def validate_config(
         if agent_port == 11434:
             errors.append(f"{label} cannot use private Ollama port 11434.")
     try:
-        if (
-            config.agent_zero_enabled
-            and gateway_port is not None
-            and int(config.agent_zero_port) == gateway_port
-        ):
+        if gateway_port is not None and int(config.agent_zero_port) == gateway_port:
             errors.append("Agent Zero local UI port must be different from the gateway port.")
     except (TypeError, ValueError):
         pass
@@ -365,10 +360,9 @@ def build_env_updates(
 ) -> dict[str, str]:
     ensure_valid_config(config, model_map, whisper_model_map=whisper_model_map, chatterbox_model_map=chatterbox_model_map)
     model_aliases = list(config.models)
-    if config.agent_zero_enabled:
-        for alias in ("agent", "agent-utility"):
-            if alias in model_map and alias not in model_aliases:
-                model_aliases.append(alias)
+    for alias in ("agent", "agent-utility"):
+        if alias in model_map and alias not in model_aliases:
+            model_aliases.append(alias)
     return {
         "OLLAMA_BASE_URL": "http://127.0.0.1:11434",
         "HOST": "127.0.0.1",
@@ -380,7 +374,7 @@ def build_env_updates(
         "CHATTERBOX_DEVICE": "auto",
         "OLLAMA_MODELS": " ".join(selected_model_tags(model_map, model_aliases)),
         "ENABLE_ARBITRARY_MODELS": "false",
-        "AGENT_ZERO_ENABLED": "true" if config.agent_zero_enabled else "false",
+        "AGENT_ZERO_ENABLED": "true",
         "AGENT_ZERO_PORT": str(config.agent_zero_port),
         "AGENT_ZERO_TAILSCALE_HTTPS_PORT": str(config.agent_zero_tailscale_https_port),
         "ENABLE_API_KEY_AUTH": "true" if config.enable_api_key_auth else "false",
@@ -459,8 +453,7 @@ def build_install_command(repo_root: Path, config: InstallConfig, system: str | 
             command.append("-SkipRepoSync")
         if not config.configure_tailscale:
             command.append("-SkipTailscaleServe")
-        if config.agent_zero_enabled:
-            command.append("-AgentZero")
+        command.append("-AgentZero")
         command.extend(
             [
                 "-UpdateSchedule",
@@ -538,9 +531,8 @@ def install_or_update(repo_root: Path, config: InstallConfig, log: LogFn) -> Non
     run_process(build_install_command(repo_root, config), repo_root, log)
     log("Install/update complete.")
     log(f"Gateway: http://127.0.0.1:{config.port}/")
-    if config.agent_zero_enabled:
-        log(f"Agent Zero: http://127.0.0.1:{config.agent_zero_port}/")
-        log(f"Agent Zero over Tailscale Serve: https://<machine>.ts.net:{config.agent_zero_tailscale_https_port}/")
+    log(f"Agent Zero: http://127.0.0.1:{config.agent_zero_port}/")
+    log(f"Agent Zero over Tailscale Serve: https://<machine>.ts.net:{config.agent_zero_tailscale_https_port}/")
 
 
 def run_gui() -> None:
@@ -567,7 +559,6 @@ def run_gui() -> None:
             self.sync_repo_var = tk.BooleanVar(value=initial_config.sync_repo)
             self.auth_var = tk.BooleanVar(value=initial_config.enable_api_key_auth)
             self.api_key_var = tk.StringVar(value=initial_config.api_key)
-            self.agent_zero_var = tk.BooleanVar(value=initial_config.agent_zero_enabled)
             self.whisper_model_var = tk.StringVar(value=initial_config.whisper_model)
             schedule_label = SCHEDULE_LABELS.get(initial_config.update_schedule, SCHEDULE_LABELS["default"])
             self.schedule_var = tk.StringVar(value=schedule_label)
@@ -650,10 +641,9 @@ def run_gui() -> None:
                 text="Configure Tailscale Serve for http://127.0.0.1:8080",
                 variable=self.configure_tailscale_var,
             ).grid(row=2, column=0, columnspan=2, sticky="w", pady=2)
-            ttk.Checkbutton(
+            ttk.Label(
                 gateway_frame,
-                text="Install Agent Zero UI on 127.0.0.1:50080 and Tailscale HTTPS port 8443",
-                variable=self.agent_zero_var,
+                text="Agent Zero UI is installed on 127.0.0.1:50080 and Tailscale HTTPS port 8443",
             ).grid(row=3, column=0, columnspan=2, sticky="w", pady=2)
             ttk.Label(
                 gateway_frame,
@@ -757,7 +747,7 @@ def run_gui() -> None:
                 chatterbox_model=initial_config.chatterbox_model,
                 enable_api_key_auth=self.auth_var.get(),
                 api_key=self.api_key_var.get().strip(),
-                agent_zero_enabled=self.agent_zero_var.get(),
+                agent_zero_enabled=True,
                 agent_zero_port=50080,
                 agent_zero_tailscale_https_port=8443,
             )

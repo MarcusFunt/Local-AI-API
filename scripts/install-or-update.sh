@@ -6,6 +6,8 @@ REMOTE_NAME="${REMOTE_NAME:-origin}"
 REMOTE_BRANCH="${REMOTE_BRANCH:-main}"
 GATEWAY_HEALTH_URL="${GATEWAY_HEALTH_URL:-http://127.0.0.1:8080/health}"
 OLLAMA_HEALTH_URL="${OLLAMA_HEALTH_URL:-http://127.0.0.1:8080/health/ollama}"
+AGENT_ZERO_PORT="${AGENT_ZERO_PORT:-50080}"
+AGENT_ZERO_TAILSCALE_HTTPS_PORT="${AGENT_ZERO_TAILSCALE_HTTPS_PORT:-8443}"
 LOCK_FILE="${LOCK_FILE:-/tmp/local-ai-api-install.lock}"
 ACCELERATOR="${LOCAL_AI_API_ACCELERATOR:-auto}"
 SKIP_REPO_SYNC="${LOCAL_AI_API_SKIP_REPO_SYNC:-0}"
@@ -317,6 +319,7 @@ compose_files_for_accelerator() {
       die "Unknown accelerator: ${accelerator}"
       ;;
   esac
+  printf '%s\n' -f "${root}/compose.agent-zero.yaml"
 }
 
 build_and_test_gateway_image() {
@@ -350,6 +353,9 @@ start_stack() {
 
   log "Starting gateway."
   compose_cmd "${compose_args[@]}" up -d gateway
+
+  log "Starting Agent Zero."
+  compose_cmd "${compose_args[@]}" up -d agent-zero
 }
 
 wait_for_url() {
@@ -416,6 +422,15 @@ configure_tailscale_serve() {
       return
     fi
     sudo_cmd tailscale serve --bg http://127.0.0.1:8080
+  fi
+
+  log "Configuring Tailscale Serve for Agent Zero on HTTPS port ${AGENT_ZERO_TAILSCALE_HTTPS_PORT}."
+  if ! tailscale serve --bg "--https=${AGENT_ZERO_TAILSCALE_HTTPS_PORT}" "http://127.0.0.1:${AGENT_ZERO_PORT}"; then
+    if [[ "${LOCAL_AI_API_SYSTEMD:-}" == "1" ]]; then
+      log "Agent Zero Tailscale Serve command failed during scheduled run; leaving current serve config unchanged."
+      return
+    fi
+    sudo_cmd tailscale serve --bg "--https=${AGENT_ZERO_TAILSCALE_HTTPS_PORT}" "http://127.0.0.1:${AGENT_ZERO_PORT}"
   fi
 }
 
@@ -568,6 +583,7 @@ main() {
 
   wait_for_url "${GATEWAY_HEALTH_URL}" "Gateway health"
   wait_for_url "${OLLAMA_HEALTH_URL}" "Ollama health"
+  wait_for_url "http://127.0.0.1:${AGENT_ZERO_PORT}" "Agent Zero UI" 90
 
   configure_tailscale_serve
   install_systemd_units "${root}"

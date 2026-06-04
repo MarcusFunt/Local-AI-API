@@ -56,6 +56,8 @@ class TestStatusJson:
                             _ollama_model("qwen3.5:9b"),
                             _ollama_model("qwen3.5:4b"),
                             _ollama_model("qwen3.5:0.8b"),
+                            _ollama_model("qwen3:14b"),
+                            _ollama_model("qwen3:8b"),
                         ]
                     },
                 )
@@ -66,7 +68,13 @@ class TestStatusJson:
         body = resp.json()
         assert body["status"] == "ok"
         assert body["ollama"]["status"] == "ok"
-        assert {model["alias"] for model in body["models"]} == {"main", "small", "dev"}
+        assert {model["alias"] for model in body["models"]} == {
+            "main",
+            "small",
+            "dev",
+            "agent",
+            "agent-utility",
+        }
         assert all(model["status"] == "ready" for model in body["models"])
         assert "repository" in body
         assert "available" in body["repository"]
@@ -88,7 +96,7 @@ class TestStatusJson:
         assert dev["model"] == "qwen3.5:0.8b"
         assert dev["status"] == "missing"
 
-    async def test_agent_zero_profiles_are_required_when_enabled(
+    async def test_agent_zero_profiles_are_always_required(
         self,
         client: httpx.AsyncClient,
         monkeypatch: pytest.MonkeyPatch,
@@ -102,7 +110,7 @@ class TestStatusJson:
             enable_arbitrary_models=False,
             request_timeout_seconds=10,
             max_request_body_bytes=10_485_760,
-            agent_zero_enabled=True,
+            agent_zero_enabled=False,
         )
         monkeypatch.setattr(status_module, "settings", enabled_settings)
 

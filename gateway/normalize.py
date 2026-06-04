@@ -12,6 +12,7 @@ MODEL_MAP: dict[str, str] = {
 
 CORE_MODEL_ALIASES = ("main", "small", "dev")
 AGENT_ZERO_MODEL_ALIASES = ("agent", "agent-utility")
+REQUIRED_MODEL_ALIASES = CORE_MODEL_ALIASES + AGENT_ZERO_MODEL_ALIASES
 
 # Direct model tags that are always accepted (same values as map targets)
 _ALLOWED_DIRECT = set(MODEL_MAP.values())
@@ -40,10 +41,8 @@ def strip_safe_provider_prefix(requested: str) -> str:
     return requested
 
 
-def required_model_aliases(agent_zero_enabled: bool) -> tuple[str, ...]:
-    if agent_zero_enabled:
-        return CORE_MODEL_ALIASES + AGENT_ZERO_MODEL_ALIASES
-    return CORE_MODEL_ALIASES
+def required_model_aliases() -> tuple[str, ...]:
+    return REQUIRED_MODEL_ALIASES
 
 
 def allowed_model_ids() -> list[str]:

@@ -6,6 +6,7 @@ SKIP_TESTS=0
 INSTALL_AUDIO="${INSTALL_AUDIO:-true}"
 GATEWAY_HEALTH_URL="${GATEWAY_HEALTH_URL:-http://127.0.0.1:8080/health}"
 OLLAMA_HEALTH_URL="${OLLAMA_HEALTH_URL:-http://127.0.0.1:8080/health/ollama}"
+AGENT_ZERO_PORT="${AGENT_ZERO_PORT:-50080}"
 
 log() {
   printf '[%s] %s\n' "$(date -Iseconds)" "$*"
@@ -125,6 +126,7 @@ compose_files_for_accelerator() {
       die "Unknown accelerator: ${accelerator}"
       ;;
   esac
+  printf '%s\n' -f "${root}/compose.agent-zero.yaml"
 }
 
 compose_cmd() {
@@ -163,6 +165,9 @@ start_stack() {
 
   log "Starting gateway container."
   compose_cmd "${compose_args[@]}" up -d gateway
+
+  log "Starting Agent Zero."
+  compose_cmd "${compose_args[@]}" up -d agent-zero
 }
 
 wait_for_url() {
@@ -202,11 +207,12 @@ main() {
 
   wait_for_url "${GATEWAY_HEALTH_URL}" "Gateway health"
   wait_for_url "${OLLAMA_HEALTH_URL}" "Ollama health"
+  wait_for_url "http://127.0.0.1:${AGENT_ZERO_PORT}" "Agent Zero UI" 90
 
   log "Running dev model smoke check."
   curl -fsS -X POST --max-time 120 "http://127.0.0.1:8080/status/check" >/dev/null
 
-  log "Docker setup complete. Gateway: http://127.0.0.1:8080/"
+  log "Docker setup complete. Gateway: http://127.0.0.1:8080/ Agent Zero: http://127.0.0.1:${AGENT_ZERO_PORT}/"
 }
 
 main "$@"

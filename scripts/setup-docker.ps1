@@ -12,6 +12,7 @@ $ErrorActionPreference = "Stop"
 
 $GatewayHealthUrl = "http://127.0.0.1:8080/health"
 $OllamaHealthUrl = "http://127.0.0.1:8080/health/ollama"
+$AgentZeroPort = if ([string]::IsNullOrWhiteSpace($env:AGENT_ZERO_PORT)) { 50080 } else { [int]$env:AGENT_ZERO_PORT }
 
 function Write-Log {
     param([Parameter(Mandatory = $true)][string]$Message)
@@ -125,17 +126,18 @@ function Get-ComposeArgumentsForAccelerator {
         [Parameter(Mandatory = $true)][string]$SelectedAccelerator
     )
 
-    switch ($SelectedAccelerator) {
+    $arguments = switch ($SelectedAccelerator) {
         "nvidia" {
-            return @("-f", (Join-Path $Root "compose.yaml"), "-f", (Join-Path $Root "compose.gpu-nvidia.yaml"))
+            @("-f", (Join-Path $Root "compose.yaml"), "-f", (Join-Path $Root "compose.gpu-nvidia.yaml"))
         }
         "cpu" {
-            return @("-f", (Join-Path $Root "compose.yaml"), "-f", (Join-Path $Root "compose.cpu.yaml"))
+            @("-f", (Join-Path $Root "compose.yaml"), "-f", (Join-Path $Root "compose.cpu.yaml"))
         }
         default {
             Stop-Fail "Unknown Windows accelerator profile: $SelectedAccelerator"
         }
     }
+    return $arguments + @("-f", (Join-Path $Root "compose.agent-zero.yaml"))
 }
 
 function Invoke-DockerCompose {
@@ -183,6 +185,9 @@ function Start-Stack {
 
     Write-Log "Starting gateway container."
     Invoke-DockerCompose -ComposeArguments $ComposeArguments -CommandArguments @("up", "-d", "gateway")
+
+    Write-Log "Starting Agent Zero."
+    Invoke-DockerCompose -ComposeArguments $ComposeArguments -CommandArguments @("up", "-d", "agent-zero")
 }
 
 function Wait-ForUrl {
@@ -222,11 +227,12 @@ function Main {
 
     Wait-ForUrl -Url $GatewayHealthUrl -Label "Gateway health"
     Wait-ForUrl -Url $OllamaHealthUrl -Label "Ollama health"
+    Wait-ForUrl -Url "http://127.0.0.1:$AgentZeroPort" -Label "Agent Zero UI" -Attempts 90
 
     Write-Log "Running dev model smoke check."
     Invoke-WebRequest -Uri "http://127.0.0.1:8080/status/check" -Method Post -UseBasicParsing -TimeoutSec 120 *> $null
 
-    Write-Log "Docker setup complete. Gateway: http://127.0.0.1:8080/"
+    Write-Log "Docker setup complete. Gateway: http://127.0.0.1:8080/ Agent Zero: http://127.0.0.1:$AgentZeroPort/"
 }
 
 try {

@@ -124,7 +124,7 @@ async def _fetch_ollama_tags() -> tuple[dict[str, Any], list[dict[str, Any]]]:
 def _profile_statuses(ollama_models: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_name = {_model_name(model): model for model in ollama_models if _model_name(model)}
     profiles: list[dict[str, Any]] = []
-    for alias in required_model_aliases(settings.agent_zero_enabled):
+    for alias in required_model_aliases():
         resolved_model = MODEL_MAP[alias]
         model = by_name.get(resolved_model)
         profiles.append(
@@ -897,7 +897,7 @@ _STATUS_HTML = """<!doctype html>
         ["Listen", `${data.gateway.host}:${data.gateway.port}`],
         ["Whisper", data.gateway.default_whisper_model],
         ["TTS", data.gateway.chatterbox_model],
-        ["Agent Zero", data.gateway.agent_zero_enabled ? "enabled" : "disabled"],
+        ["Agent Zero", "required"],
         ["Python", data.gateway.python],
         ["Platform", data.gateway.platform],
         ["API key auth", data.gateway.api_key_auth_enabled ? "enabled" : "disabled"],

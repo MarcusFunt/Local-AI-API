@@ -214,9 +214,12 @@ configure_gateway_env() {
   set_env_var "${env_file}" "HOST" "127.0.0.1"
   set_env_var "${env_file}" "PORT" "8080"
   set_env_var "${env_file}" "DEFAULT_MODEL_PROFILE" "main"
-  set_env_var "${env_file}" "OLLAMA_MODELS" "qwen3.5:9b qwen3.5:4b qwen3.5:0.8b"
+  set_env_var "${env_file}" "OLLAMA_MODELS" "qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b"
   set_env_var "${env_file}" "DEFAULT_WHISPER_MODEL" "none"
   set_env_var "${env_file}" "ENABLE_ARBITRARY_MODELS" "false"
+  set_env_var "${env_file}" "AGENT_ZERO_ENABLED" "true"
+  set_env_var "${env_file}" "AGENT_ZERO_PORT" "50080"
+  set_env_var "${env_file}" "AGENT_ZERO_TAILSCALE_HTTPS_PORT" "8443"
   set_env_var "${env_file}" "ENABLE_API_KEY_AUTH" "false"
   set_env_var "${env_file}" "API_KEY" ""
 }

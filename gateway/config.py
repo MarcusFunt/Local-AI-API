@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     request_timeout_seconds: int = 600
     max_request_body_bytes: int = 10_485_760
     enable_arbitrary_models: bool = False
-    agent_zero_enabled: bool = False
+    agent_zero_enabled: bool = True
     default_whisper_model: str = "none"
     whisper_device: str = "auto"
     whisper_cache_dir: str = ""
@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_auth_config(self) -> "Settings":
         from .normalize import CHATTERBOX_MODEL_MAP, MODEL_MAP, WHISPER_MODEL_MAP
+
+        self.agent_zero_enabled = True
 
         if self.enable_api_key_auth and not self.api_key.strip():
             raise ValueError("API_KEY must be set when ENABLE_API_KEY_AUTH=true.")

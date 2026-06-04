@@ -10,14 +10,15 @@ per-project agent containers.
 - Docker Engine and Compose through the existing Linux installer.
 - Ollama in Docker, private to the gateway network namespace.
 - The FastAPI gateway on host loopback only: `127.0.0.1:8080`.
+- Agent Zero on host loopback only: `127.0.0.1:50080`.
 - Tailscale Serve for trusted tailnet HTTPS access.
 - A low-privilege `agent` user with workspaces under `/srv/agent-workspaces`.
 - A dedicated `local-ai-agents` Docker bridge plus a gateway-only proxy for
   agent containers at `http://172.30.50.1:18080/v1`.
 - Config/work backups that intentionally exclude Ollama model volumes.
 
-Raw Ollama is never published. The only Docker-published host port should be
-`127.0.0.1:8080`.
+Raw Ollama is never published. The only Docker-published host ports should be
+the gateway on `127.0.0.1:8080` and Agent Zero on `127.0.0.1:50080`.
 
 ## First Run
 
@@ -53,9 +54,12 @@ OLLAMA_BASE_URL=http://127.0.0.1:11434
 HOST=127.0.0.1
 PORT=8080
 DEFAULT_MODEL_PROFILE=main
-OLLAMA_MODELS=qwen3.5:9b qwen3.5:4b qwen3.5:0.8b
+OLLAMA_MODELS=qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b
 DEFAULT_WHISPER_MODEL=none
 ENABLE_ARBITRARY_MODELS=false
+AGENT_ZERO_ENABLED=true
+AGENT_ZERO_PORT=50080
+AGENT_ZERO_TAILSCALE_HTTPS_PORT=8443
 ENABLE_API_KEY_AUTH=false
 API_KEY=
 ```

@@ -12,11 +12,11 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPOSE_VARIANTS = {
-    "cpu": ["compose.yaml", "compose.cpu.yaml"],
-    "nvidia": ["compose.yaml", "compose.gpu-nvidia.yaml"],
-    "amd": ["compose.yaml", "compose.gpu-amd.yaml"],
+    "cpu": ["compose.yaml", "compose.cpu.yaml", "compose.agent-zero.yaml"],
+    "nvidia": ["compose.yaml", "compose.gpu-nvidia.yaml", "compose.agent-zero.yaml"],
+    "amd": ["compose.yaml", "compose.gpu-amd.yaml", "compose.agent-zero.yaml"],
 }
-AGENT_ZERO_COMPOSE_FILES = ["compose.yaml", "compose.cpu.yaml", "compose.agent-zero.yaml"]
+AGENT_ZERO_COMPOSE_FILES = COMPOSE_VARIANTS["cpu"]
 SHELL_SCRIPTS = [
     "scripts/setup-docker.sh",
     "scripts/install-or-update.sh",
@@ -73,7 +73,7 @@ def test_compose_config_is_valid_for_accelerator_variants(variant: str, files: l
     assert config["services"]["ollama"]["labels"]["local-ai-api.accelerator"] == variant
 
 
-@pytest.mark.parametrize("files", [*COMPOSE_VARIANTS.values(), AGENT_ZERO_COMPOSE_FILES])
+@pytest.mark.parametrize("files", COMPOSE_VARIANTS.values())
 def test_compose_does_not_publish_raw_ollama_port(files: list[str]):
     config = _compose_config(files)
 
@@ -94,13 +94,26 @@ def test_gateway_keeps_ollama_loopback_and_shared_namespace(files: list[str]):
     assert gateway["environment"]["OLLAMA_BASE_URL"] == "http://127.0.0.1:11434"
     assert gateway["environment"]["HOST"] == "0.0.0.0"
     assert gateway["environment"]["PORT"] == "8080"
+    assert gateway["environment"]["AGENT_ZERO_ENABLED"] == "true"
     assert gateway["network_mode"] == "service:ollama"
     assert model_init["network_mode"] == "service:ollama"
     assert model_init["entrypoint"][:2] == ["/bin/sh", "-c"]
-    assert 'models="qwen3.5:9b qwen3.5:4b qwen3.5:0.8b"' in model_init["entrypoint"][2]
-    assert "for model in $$models" in model_init["entrypoint"][2]
+    assert (
+        'models="qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b"'
+        in model_init["entrypoint"][2]
+    )
+    assert "for model in $$models qwen3:14b qwen3:8b" in model_init["entrypoint"][2]
+    assert 'case " $$pulled " in' in model_init["entrypoint"][2]
     assert 'ollama pull "$$model"' in model_init["entrypoint"][2]
     assert ollama["environment"]["OLLAMA_HOST"] == "127.0.0.1:11434"
+
+
+def test_agent_zero_models_are_pulled_with_custom_ollama_models():
+    config = _compose_config(COMPOSE_VARIANTS["cpu"], {"OLLAMA_MODELS": "qwen3.5:0.8b"})
+    entrypoint = config["services"]["model-init"]["entrypoint"][2]
+
+    assert 'models="qwen3.5:0.8b"' in entrypoint
+    assert "for model in $$models qwen3:14b qwen3:8b" in entrypoint
 
 
 @pytest.mark.parametrize("files", COMPOSE_VARIANTS.values())
@@ -126,7 +139,7 @@ def test_gateway_container_owns_python_and_model_caches(files: list[str]):
 
 
 @pytest.mark.parametrize("files", COMPOSE_VARIANTS.values())
-def test_only_gateway_port_is_published_on_loopback(files: list[str]):
+def test_only_gateway_and_agent_zero_ports_are_published_on_loopback(files: list[str]):
     config = _compose_config(files)
     published_ports = []
 
@@ -141,7 +154,10 @@ def test_only_gateway_port_is_published_on_loopback(files: list[str]):
                 )
             )
 
-    assert published_ports == [("ollama", "127.0.0.1", "8080", 8080)]
+    assert sorted(published_ports) == sorted([
+        ("ollama", "127.0.0.1", "8080", 8080),
+        ("agent-zero", "127.0.0.1", "50080", 80),
+    ])
 
 
 def test_agent_zero_compose_publishes_ui_only_on_loopback():

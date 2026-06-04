@@ -9,6 +9,7 @@ from gateway.normalize import (
     CHATTERBOX_MODEL_MAP,
     MODEL_MAP,
     WHISPER_MODEL_MAP,
+    required_model_aliases,
     resolve_chatterbox_model,
     resolve_model,
     resolve_whisper_model,
@@ -52,6 +53,9 @@ class TestAliasMapping:
         s = _settings()
         for alias, expected in MODEL_MAP.items():
             assert resolve_model(alias, s) == expected
+
+    def test_agent_zero_aliases_are_required(self):
+        assert required_model_aliases() == ("main", "small", "dev", "agent", "agent-utility")
 
 
 class TestDirectModelTags:

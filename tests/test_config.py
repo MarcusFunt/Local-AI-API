@@ -62,6 +62,11 @@ def test_arbitrary_default_model_profile_is_allowed_when_enabled():
     assert settings.default_model_profile == "llama3:8b"
 
 
+def test_agent_zero_enabled_is_forced_true():
+    settings = Settings(agent_zero_enabled=False)
+    assert settings.agent_zero_enabled is True
+
+
 def test_invalid_default_whisper_model_is_rejected():
     with pytest.raises(ValidationError):
         Settings(default_whisper_model="large")

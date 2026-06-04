@@ -14,7 +14,7 @@ x-gateway-environment: &gateway-environment
   HF_HOME: /models/cache/huggingface
   TORCH_HOME: /models/cache/torch
   ENABLE_ARBITRARY_MODELS: ${ENABLE_ARBITRARY_MODELS:-false}
-  AGENT_ZERO_ENABLED: ${AGENT_ZERO_ENABLED:-false}
+  AGENT_ZERO_ENABLED: "true"
   ENABLE_API_KEY_AUTH: ${ENABLE_API_KEY_AUTH:-false}
   API_KEY: ${API_KEY:-}
   REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-600}
@@ -49,8 +49,13 @@ services:
       - -c
       - |
         set -eu
-        models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b}"
-        for model in $$models; do
+        models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b}"
+        pulled=""
+        for model in $$models qwen3:14b qwen3:8b; do
+          case " $$pulled " in
+            *" $$model "*) continue ;;
+          esac
+          pulled="$$pulled $$model"
           ollama pull "$$model"
         done
     depends_on:
