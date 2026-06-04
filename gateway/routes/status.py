@@ -4,12 +4,13 @@ import platform
 import socket
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from ..app_update import get_repo_update_status, run_repo_update
 from ..config import settings
 from ..normalize import MODEL_MAP, required_model_aliases, resolve_model
 
@@ -19,6 +20,7 @@ _STARTED_AT = time.monotonic()
 _STATUS_TIMEOUT = 5.0
 _CHECK_TIMEOUT = 120.0
 _DEV_ALIAS = "dev"
+_UPDATE_HEADER_VALUE = "repo-update"
 _LAST_DEV_CHECK: dict[str, Any] | None = None
 
 
@@ -163,6 +165,7 @@ def _runtime_status() -> dict[str, Any]:
 async def _build_status_payload() -> dict[str, Any]:
     ollama, ollama_models = await _fetch_ollama_tags()
     profiles = _profile_statuses(ollama_models)
+    repository = await get_repo_update_status()
     missing_profiles = [profile for profile in profiles if profile["status"] != "ready"]
     overall_status = "ok" if ollama["status"] == "ok" and not missing_profiles else "degraded"
 
@@ -172,6 +175,7 @@ async def _build_status_payload() -> dict[str, Any]:
         "gateway": _runtime_status(),
         "ollama": ollama,
         "models": profiles,
+        "repository": repository,
         "last_dev_check": _LAST_DEV_CHECK,
     }
 
@@ -257,6 +261,26 @@ async def run_status_check() -> JSONResponse:
     global _LAST_DEV_CHECK
     _LAST_DEV_CHECK = await _run_dev_check()
     return JSONResponse(_LAST_DEV_CHECK)
+
+
+@router.post("/status/update")
+async def run_status_update(
+    x_local_ai_admin_action: Annotated[str | None, Header()] = None,
+) -> JSONResponse:
+    if x_local_ai_admin_action != _UPDATE_HEADER_VALUE:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "message": "Missing status update confirmation header.",
+                    "type": "forbidden",
+                    "code": "status_update_confirmation_required",
+                }
+            },
+        )
+    result = await run_repo_update()
+    status_code = 409 if result.get("status") == "running" else 200
+    return JSONResponse(result, status_code=status_code)
 
 
 _STATUS_HTML = """<!doctype html>
@@ -716,6 +740,19 @@ _STATUS_HTML = """<!doctype html>
 
           <article class="panel">
             <header>
+              <h2>App update</h2>
+            </header>
+            <div class="panel-body">
+              <div class="check-result" id="update-result"></div>
+              <button class="button" id="run-update" type="button" style="width:100%; margin-top:16px;">
+                <span aria-hidden="true">&#8681;</span>
+                Update from Git
+              </button>
+            </div>
+          </article>
+
+          <article class="panel">
+            <header>
               <h2>Runtime</h2>
             </header>
             <div class="panel-body">
@@ -741,6 +778,8 @@ _STATUS_HTML = """<!doctype html>
       refresh: document.querySelector("#refresh"),
       runCheck: document.querySelector("#run-check"),
       checkResult: document.querySelector("#check-result"),
+      runUpdate: document.querySelector("#run-update"),
+      updateResult: document.querySelector("#update-result"),
     };
 
     const fmtTime = (value) => {
@@ -770,8 +809,8 @@ _STATUS_HTML = """<!doctype html>
       .replace(/"/g, "&quot;");
 
     const stateKind = (status) => {
-      if (["ok", "ready", "passed"].includes(status)) return "ok";
-      if (["degraded", "missing", "unknown"].includes(status)) return "warn";
+      if (["ok", "ready", "passed", "idle"].includes(status)) return "ok";
+      if (["degraded", "missing", "unknown", "running", "unavailable"].includes(status)) return "warn";
       return "bad";
     };
 
@@ -852,6 +891,7 @@ _STATUS_HTML = """<!doctype html>
       `).join("");
 
       renderCheck(check);
+      renderUpdate(data.repository);
       els.runtime.innerHTML = [
         ["Host", data.gateway.hostname],
         ["Listen", `${data.gateway.host}:${data.gateway.port}`],
@@ -889,6 +929,35 @@ _STATUS_HTML = """<!doctype html>
       `;
     }
 
+    function renderUpdate(repository, update = repository?.last_update) {
+      if (!repository) {
+        els.runUpdate.disabled = true;
+        els.updateResult.innerHTML = `<div class="muted">Repository status unavailable.</div>`;
+        return;
+      }
+
+      const busy = repository.status === "running" || update?.status === "running";
+      els.runUpdate.disabled = busy || !repository.available;
+      els.runUpdate.title = repository.available ? "" : (repository.reason ?? "Repository update is unavailable.");
+
+      const rows = [];
+      rows.push(["Status", state(update?.status ?? repository.status ?? "idle")]);
+      rows.push(["Branch", escapeHtml(repository.branch ?? update?.branch ?? "--")]);
+      rows.push(["Head", escapeHtml(repository.head ?? update?.head_after ?? "--")]);
+      rows.push(["Upstream", escapeHtml(repository.upstream ?? update?.upstream ?? "--")]);
+      rows.push(["Dirty", escapeHtml(repository.dirty === true ? "yes" : repository.dirty === false ? "no" : "--")]);
+      if (!repository.available) rows.push(["Reason", escapeHtml(repository.reason ?? "--")]);
+      if (update?.latency_ms) rows.push(["Duration", escapeHtml(`${update.latency_ms} ms`)]);
+      if (update?.updated !== undefined) rows.push(["Updated", escapeHtml(update.updated ? "yes" : "no")]);
+      if (update?.restart_recommended) rows.push(["Restart", escapeHtml("recommended")]);
+      if (update?.error) rows.push(["Error", escapeHtml(update.error)]);
+      if (update?.output) rows.push(["Output", `<span class="response-box code">${escapeHtml(update.output)}</span>`]);
+
+      els.updateResult.innerHTML = rows.map(([label, value]) => `
+        <div class="row"><strong>${escapeHtml(label)}</strong><span>${value}</span></div>
+      `).join("");
+    }
+
     async function refreshStatus() {
       els.refresh.disabled = true;
       try {
@@ -918,8 +987,31 @@ _STATUS_HTML = """<!doctype html>
       }
     }
 
+    async function runUpdate() {
+      if (!window.confirm("Pull the latest Git changes for Local AI API?")) return;
+      els.runUpdate.disabled = true;
+      els.runUpdate.textContent = "Updating from Git...";
+      try {
+        const response = await fetch("/status/update", {
+          method: "POST",
+          headers: { "X-Local-AI-Admin-Action": "repo-update" },
+        });
+        const payload = await response.json();
+        if (!response.ok && response.status !== 409) {
+          throw new Error(payload?.error?.message ?? `Update request returned HTTP ${response.status}`);
+        }
+        renderUpdate({ available: true, status: payload.status, last_update: payload }, payload);
+        await refreshStatus();
+      } catch (error) {
+        renderUpdate({ available: true, status: "failed", last_update: { status: "failed", error: error.message } });
+      } finally {
+        els.runUpdate.innerHTML = '<span aria-hidden="true">&#8681;</span> Update from Git';
+      }
+    }
+
     els.refresh.addEventListener("click", refreshStatus);
     els.runCheck.addEventListener("click", runCheck);
+    els.runUpdate.addEventListener("click", runUpdate);
     refreshStatus();
     setInterval(refreshStatus, 15000);
   </script>

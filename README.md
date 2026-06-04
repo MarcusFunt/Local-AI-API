@@ -218,7 +218,11 @@ Agent Zero on `http://127.0.0.1:50080`, and configures Tailscale Serve for
 Agent Zero is configured to use this gateway's `/v1` OpenAI-compatible API with
 the `agent` and `agent-utility` model aliases. Do not use Agent Zero's public
 Remote Link, Cloudflare Tunnel, Tailscale Funnel, or Microsoft Dev Tunnels in
-this project; keep access private through Tailscale Serve.
+this project; keep access private through Tailscale Serve. When the gateway
+`API_KEY` is set, the Agent Zero Docker override writes it into Agent Zero's
+`API_KEY_OTHER` setting automatically so the configured OpenAI-compatible
+provider can authenticate to the gateway. If gateway auth is disabled, Agent
+Zero receives the harmless dummy key `unused`.
 
 ---
 
@@ -304,8 +308,9 @@ The gateway container serves a small status GUI from the same FastAPI process:
 | `/status` | Status GUI alias |
 | `/status.json` | JSON status feed for gateway, Ollama, model readiness, and runtime settings |
 | `/status/check` | Runs a non-streaming end-to-end check against the `dev` profile (`qwen3.5:0.8b`) |
+| `/status/update` | Runs a fast-forward `git pull --ff-only` for the checkout hosting the gateway |
 
-The status page shows gateway runtime health, Ollama connectivity, whether `main`, `small`, and `dev` are pulled, and the latest explicit dev-model inference check. The check uses a fixed tiny prompt and does not log prompt content.
+The status page shows gateway runtime health, Ollama connectivity, whether `main`, `small`, and `dev` are pulled, the latest explicit dev-model inference check, and a Git update button when the gateway is running from a Git checkout. The check uses a fixed tiny prompt and does not log prompt content. The update button only performs a fast-forward pull; it refuses to overwrite local changes and reports when a restart or rebuild is recommended.
 
 If optional API-key auth is enabled, the status GUI is protected like other non-health routes. Health endpoints remain available without auth.
 
@@ -512,7 +517,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `AGENT_ZERO_PORT` | `50080` | Host loopback port for the Agent Zero UI. |
 | `AGENT_ZERO_TAILSCALE_HTTPS_PORT` | `8443` | Tailscale Serve HTTPS port for Agent Zero. |
 | `ENABLE_API_KEY_AUTH` | `false` | If `true`, requires a `Bearer` token on all non-health requests. |
-| `API_KEY` | *(empty)* | The required non-empty token when `ENABLE_API_KEY_AUTH=true`. |
+| `API_KEY` | *(empty)* | The required non-empty token when `ENABLE_API_KEY_AUTH=true`; also passed to Agent Zero as its `other` provider key when Agent Zero is enabled. |
 | `REQUEST_TIMEOUT_SECONDS` | `600` | Max seconds to wait for Ollama. Large models can be slow on first load. |
 | `MAX_REQUEST_BODY_BYTES` | `10485760` | Max allowed request body (10 MiB). |
 

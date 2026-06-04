@@ -32,7 +32,7 @@ POWERSHELL_SCRIPTS = [
 ]
 
 
-def _compose_config(files: list[str]) -> dict:
+def _compose_config(files: list[str], env_overrides: dict[str, str] | None = None) -> dict:
     if shutil.which("docker") is None:
         pytest.skip("docker is not installed")
 
@@ -47,6 +47,8 @@ def _compose_config(files: list[str]) -> dict:
         "API_KEY",
     ):
         env.pop(key, None)
+    if env_overrides:
+        env.update(env_overrides)
 
     command = ["docker", "compose"]
     for file_name in files:
@@ -148,6 +150,10 @@ def test_agent_zero_compose_publishes_ui_only_on_loopback():
     agent_zero = config["services"]["agent-zero"]
     assert agent_zero["image"] == "agent0ai/agent-zero:latest"
     assert agent_zero["environment"]["API_KEY_OTHER"] == "unused"
+    assert agent_zero["command"][:2] == ["/bin/sh", "-c"]
+    assert "API_KEY_OTHER" in agent_zero["command"][2]
+    assert "/a0/usr/.env" in agent_zero["command"][2]
+    assert 'exec /exe/initialize.sh "$${BRANCH:-main}"' in agent_zero["command"][2]
     assert agent_zero["environment"]["A0_SET__model_config__chat_model__provider"] == "other"
     assert agent_zero["environment"]["A0_SET__model_config__chat_model__name"] == "agent"
     assert (
@@ -170,6 +176,13 @@ def test_agent_zero_compose_publishes_ui_only_on_loopback():
         "target": "/a0/usr",
         "volume": {},
     } in agent_zero["volumes"]
+
+
+def test_agent_zero_compose_forwards_gateway_api_key_when_set():
+    config = _compose_config(AGENT_ZERO_COMPOSE_FILES, {"API_KEY": "local-test-key"})
+
+    agent_zero = config["services"]["agent-zero"]
+    assert agent_zero["environment"]["API_KEY_OTHER"] == "local-test-key"
 
 
 @pytest.mark.parametrize("script", SHELL_SCRIPTS)
