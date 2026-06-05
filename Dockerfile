@@ -36,6 +36,10 @@ COPY Dockerfile compose.yaml compose.cpu.yaml compose.gpu-amd.yaml compose.gpu-n
 
 RUN chown -R app:app /app /home/app /models
 
+# Allow git to operate on /app even when it is bind-mounted from the host and
+# owned by a different uid (common with Docker Desktop on Windows/macOS).
+RUN git config --system --add safe.directory /app
+
 USER app
 EXPOSE 8080
 

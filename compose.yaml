@@ -73,6 +73,13 @@ services:
     network_mode: service:ollama
     environment: *gateway-environment
     volumes:
+      # Bind-mount the host repo so the container has a live .git checkout.
+      # This lets app_update.py run `git pull` inside the container and have
+      # it take effect on the host source tree.  Python packages are installed
+      # to the system Python path (not /app), so this mount does not shadow them.
+      - type: bind
+        source: .
+        target: /app
       - gateway-model-cache:/models/cache
     depends_on:
       ollama:
