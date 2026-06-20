@@ -11,3 +11,7 @@ build/
 .coverage
 htmlcov/
 .claude/
+
+# Local bootstrap identity files copied onto removable media.
+authorized_keys
+tailscale-auth-key.txt

@@ -25,6 +25,8 @@ SHELL_SCRIPTS = [
     "scripts/run-agent-container.sh",
     "scripts/backup-server-state.sh",
     "scripts/verify-server-plan.sh",
+    "sd-card/prepare.sh",
+    "sd-card/start.sh",
 ]
 POWERSHELL_SCRIPTS = [
     "scripts/setup-docker.ps1",
