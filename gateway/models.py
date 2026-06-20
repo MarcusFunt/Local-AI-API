@@ -23,7 +23,7 @@ class ChatMessage(BaseModel):
         value = value.strip()
         if value not in _CHAT_ROLES:
             allowed = ", ".join(sorted(_CHAT_ROLES))
-            raise ValueError(f"Unsupported chat message role. Allowed roles: {allowed}.")
+            raise ValueError("Unsupported chat message role. Allowed roles: " + allowed + ".")
         return value
 
     @field_validator("content")
@@ -71,6 +71,9 @@ class ChatCompletionRequest(BaseModel):
     stream_options: dict[str, Any] | None = None
     user: str | None = None
     n: int | None = Field(default=None, gt=0)
+    # RAG extension: set true to retrieve context chunks from the vector store
+    # before forwarding to Ollama. Ignored when RAG_ENABLED=false.
+    use_rag: bool = False
 
     @field_validator("model")
     @classmethod
@@ -107,7 +110,9 @@ class ChatCompletionRequest(BaseModel):
             format_type = self.response_format.get("type")
             if format_type not in _RESPONSE_FORMAT_TYPES:
                 allowed = ", ".join(sorted(_RESPONSE_FORMAT_TYPES))
-                raise ValueError(f"Unsupported response_format type. Allowed types: {allowed}.")
+                raise ValueError(
+                    "Unsupported response_format type. Allowed types: " + allowed + "."
+                )
         return self
 
 

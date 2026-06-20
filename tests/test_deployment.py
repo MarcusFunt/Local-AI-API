@@ -101,7 +101,7 @@ def test_gateway_keeps_ollama_loopback_and_shared_namespace(files: list[str]):
     assert model_init["network_mode"] == "service:ollama"
     assert model_init["entrypoint"][:2] == ["/bin/sh", "-c"]
     assert (
-        'models="qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b"'
+        'models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b}"'
         in model_init["entrypoint"][2]
     )
     assert "for model in $$models qwen3:14b qwen3:8b" in model_init["entrypoint"][2]

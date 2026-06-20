@@ -12,6 +12,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 ARG INSTALL_AUDIO=true
+ARG INSTALL_MCP=false
+ARG INSTALL_RAG=false
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends build-essential ffmpeg git libsndfile1 && \
@@ -21,10 +23,12 @@ RUN groupadd --system app && \
     useradd --system --gid app --home-dir /home/app --shell /usr/sbin/nologin app && \
     mkdir -p /home/app /models/cache
 
-COPY requirements.txt requirements-audio.txt ./
+COPY requirements.txt requirements-audio.txt requirements-mcp.txt requirements-rag.txt ./
 RUN python -m pip install --upgrade pip && \
     python -m pip install -r requirements.txt && \
     if [ "$INSTALL_AUDIO" = "true" ]; then python -m pip install -r requirements-audio.txt; fi && \
+    if [ "$INSTALL_MCP" = "true" ]; then python -m pip install -r requirements-mcp.txt; fi && \
+    if [ "$INSTALL_RAG" = "true" ]; then python -m pip install -r requirements-rag.txt; fi && \
     apt-get purge -y --auto-remove build-essential && \
     rm -rf /var/lib/apt/lists/*
 

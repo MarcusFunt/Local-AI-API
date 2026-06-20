@@ -18,6 +18,7 @@ from . import client as ollama_client
 from .config import settings
 from .routes.audio import router as audio_router
 from .routes.chat import router as chat_router
+from .routes.documents import router as documents_router
 from .routes.health import router as health_router
 from .routes.models import router as models_router
 from .routes.status import router as status_router
@@ -28,7 +29,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_HEALTH_PATHS = {"/health", "/health/ollama"}
+_HEALTH_PATHS = {"/health", "/health/ollama", "/health/qdrant"}
 
 
 # ---------------------------------------------------------------------------
@@ -185,12 +186,12 @@ def create_app() -> FastAPI:
     )
 
     # Middleware: registered in reverse execution order.
-    # AuthMiddleware registered first → executes second (after body-size check).
-    # BodySizeLimitMiddleware registered second → executes first (outermost).
+    # AuthMiddleware registered first -> executes second (after body-size check).
+    # BodySizeLimitMiddleware registered second -> executes first (outermost).
     app.add_middleware(AuthMiddleware)
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
 
-    # Custom HTTPException handler — when detail is already our {"error": {...}} dict,
+    # Custom HTTPException handler -- when detail is already our {"error": {...}} dict,
     # pass it through directly instead of wrapping in {"detail": ...}.
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException) -> Response:
@@ -206,7 +207,7 @@ def create_app() -> FastAPI:
             }
         return JSONResponse(status_code=exc.status_code, content=content)
 
-    # Custom validation error handler — emit OpenAI-compatible error envelope.
+    # Custom validation error handler -- emit OpenAI-compatible error envelope.
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError) -> Response:
         return JSONResponse(
@@ -225,6 +226,15 @@ def create_app() -> FastAPI:
     app.include_router(audio_router)
     app.include_router(health_router)
     app.include_router(status_router)
+    app.include_router(documents_router)
+
+    # MCP server -- mount at /mcp if fastmcp is installed
+    try:
+        from .mcp_server.server import mcp as _mcp_server
+        app.mount("/mcp", _mcp_server.get_asgi_app())
+        logger.info("MCP server mounted at /mcp")
+    except ImportError:
+        logger.info("fastmcp not installed -- MCP server not available")
 
     return app
 

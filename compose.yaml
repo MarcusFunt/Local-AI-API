@@ -69,6 +69,7 @@ services:
       dockerfile: Dockerfile
       args:
         INSTALL_AUDIO: ${INSTALL_AUDIO:-true}
+        INSTALL_RAG: ${INSTALL_RAG:-false}
     restart: unless-stopped
     network_mode: service:ollama
     environment: *gateway-environment
