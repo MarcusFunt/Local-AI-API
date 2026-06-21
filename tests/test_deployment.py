@@ -101,13 +101,22 @@ def test_gateway_keeps_ollama_loopback_and_shared_namespace(files: list[str]):
     assert model_init["network_mode"] == "service:ollama"
     assert model_init["entrypoint"][:2] == ["/bin/sh", "-c"]
     assert (
-        'models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b}"'
+        'models="qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b"'
         in model_init["entrypoint"][2]
     )
     assert "for model in $$models qwen3:14b qwen3:8b" in model_init["entrypoint"][2]
     assert 'case " $$pulled " in' in model_init["entrypoint"][2]
     assert 'ollama pull "$$model"' in model_init["entrypoint"][2]
     assert ollama["environment"]["OLLAMA_HOST"] == "127.0.0.1:11434"
+
+
+def test_compose_source_keeps_ollama_models_fallback_expression():
+    compose_source = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
+
+    assert (
+        'models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b}"'
+        in compose_source
+    )
 
 
 def test_agent_zero_models_are_pulled_with_custom_ollama_models():

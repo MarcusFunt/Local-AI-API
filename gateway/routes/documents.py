@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import time
-import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -27,12 +25,13 @@ async def ingest_document(
     document_id: Annotated[str | None, Form()] = None,
 ) -> JSONResponse:
     """Upload and index a document for RAG retrieval."""
-    from ..rag.store import ingest_chunks
-    from ..rag.chunker import chunk_text, extract_text_from_bytes
     from ..rag.config import RAG_ENABLED
 
     if not RAG_ENABLED:
         raise HTTPException(status_code=503, detail="RAG is not enabled. Set RAG_ENABLED=true.")
+
+    from ..rag.chunker import chunk_text, extract_text_from_bytes
+    from ..rag.store import ingest_chunks
 
     content = await file.read()
     if len(content) > _MAX_FILE_BYTES:
@@ -68,11 +67,12 @@ async def ingest_document(
 @router.get("/v1/documents")
 async def list_documents() -> JSONResponse:
     """List all indexed documents."""
-    from ..rag.store import list_documents as _list
     from ..rag.config import RAG_ENABLED
 
     if not RAG_ENABLED:
         raise HTTPException(status_code=503, detail="RAG is not enabled.")
+    from ..rag.store import list_documents as _list
+
     try:
         docs = await _list()
     except Exception as exc:
@@ -83,11 +83,12 @@ async def list_documents() -> JSONResponse:
 @router.delete("/v1/documents/{document_id}")
 async def delete_document(document_id: str) -> JSONResponse:
     """Remove a document and all its chunks from the vector store."""
-    from ..rag.store import delete_document as _delete
     from ..rag.config import RAG_ENABLED
 
     if not RAG_ENABLED:
         raise HTTPException(status_code=503, detail="RAG is not enabled.")
+    from ..rag.store import delete_document as _delete
+
     try:
         await _delete(document_id)
     except Exception as exc:
@@ -98,13 +99,14 @@ async def delete_document(document_id: str) -> JSONResponse:
 @router.post("/v1/search")
 async def search_documents(req: SearchRequest) -> JSONResponse:
     """Semantic search over indexed documents."""
-    from ..rag.store import search
     from ..rag.config import RAG_ENABLED
 
     if not RAG_ENABLED:
         raise HTTPException(status_code=503, detail="RAG is not enabled.")
     if not req.query.strip():
         raise HTTPException(status_code=422, detail="Query must not be empty.")
+    from ..rag.store import search
+
     try:
         results = await search(req.query, top_k=req.top_k, document_id=req.document_id)
     except Exception as exc:

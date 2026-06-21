@@ -5,11 +5,39 @@ import time
 import uuid
 from typing import Any
 
-from qdrant_client import QdrantClient, AsyncQdrantClient
-from qdrant_client.models import (
-    Distance, VectorParams, PointStruct, Filter,
-    FieldCondition, MatchValue, PayloadSchemaType,
-)
+try:
+    from qdrant_client import AsyncQdrantClient
+    from qdrant_client.models import (
+        Distance,
+        FieldCondition,
+        Filter,
+        MatchValue,
+        PointStruct,
+        VectorParams,
+    )
+except ImportError as exc:  # pragma: no cover - exercised by tests without RAG deps
+    AsyncQdrantClient = None  # type: ignore[assignment]
+    _QDRANT_IMPORT_ERROR: ImportError | None = exc
+
+    class Distance:  # type: ignore[no-redef]
+        COSINE = "Cosine"
+
+    def VectorParams(**kwargs: Any) -> dict[str, Any]:  # type: ignore[no-redef]
+        return kwargs
+
+    def PointStruct(**kwargs: Any) -> dict[str, Any]:  # type: ignore[no-redef]
+        return kwargs
+
+    def Filter(**kwargs: Any) -> dict[str, Any]:  # type: ignore[no-redef]
+        return kwargs
+
+    def FieldCondition(**kwargs: Any) -> dict[str, Any]:  # type: ignore[no-redef]
+        return kwargs
+
+    def MatchValue(**kwargs: Any) -> dict[str, Any]:  # type: ignore[no-redef]
+        return kwargs
+else:
+    _QDRANT_IMPORT_ERROR = None
 
 from .config import QDRANT_URL, QDRANT_COLLECTION, EMBED_DIM, TOP_K
 from .embeddings import embed_text, embed_texts
@@ -17,9 +45,18 @@ from .embeddings import embed_text, embed_texts
 _client: AsyncQdrantClient | None = None
 
 
+def _missing_qdrant_dependency_error() -> RuntimeError:
+    return RuntimeError(
+        "RAG support requires qdrant-client. "
+        "Install the RAG dependencies with: pip install -r requirements-rag.txt"
+    )
+
+
 def get_client() -> AsyncQdrantClient:
     global _client
     if _client is None:
+        if AsyncQdrantClient is None:
+            raise _missing_qdrant_dependency_error() from _QDRANT_IMPORT_ERROR
         _client = AsyncQdrantClient(url=QDRANT_URL)
     return _client
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import httpx
 import pytest
@@ -49,6 +50,13 @@ def _settings(**overrides: Any) -> Settings:
     }
     values.update(overrides)
     return Settings(**values)
+
+
+def _start_session(ws: Any, **overrides: Any) -> dict[str, Any]:
+    frame: dict[str, Any] = {"type": "session.start", "whisper_model": "tiny"}
+    frame.update(overrides)
+    ws.send_json(frame)
+    return ws.receive_json()
 
 
 def test_conversation_happy_path(monkeypatch: pytest.MonkeyPatch):
@@ -221,3 +229,214 @@ def test_conversation_audio_size_limit_is_per_turn(monkeypatch: pytest.MonkeyPat
             commit_error = ws.receive_json()
             assert commit_error["type"] == "error"
             assert commit_error["error"]["code"] == "no_input_audio"
+
+
+def test_conversation_rejects_invalid_start_frame(monkeypatch: pytest.MonkeyPatch):
+    _patch_settings(monkeypatch, _settings())
+
+    with TestClient(create_app()) as client:
+        with client.websocket_connect("/v1/audio/conversations") as ws:
+            ws.send_json({"type": "ping"})
+            error = ws.receive_json()
+            assert error["type"] == "error"
+            assert error["error"]["code"] == "invalid_session_start"
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                ws.receive_json()
+
+    assert exc_info.value.code == 1003
+
+
+def test_conversation_rejects_disabled_default_whisper(monkeypatch: pytest.MonkeyPatch):
+    _patch_settings(monkeypatch, _settings(default_whisper_model="none"))
+
+    with TestClient(create_app()) as client:
+        with client.websocket_connect("/v1/audio/conversations") as ws:
+            ws.send_json({"type": "session.start"})
+            error = ws.receive_json()
+            assert error["type"] == "error"
+            assert error["error"]["code"] == "audio_model_disabled"
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                ws.receive_json()
+
+    assert exc_info.value.code == 1008
+
+
+def test_conversation_ping_clear_and_unexpected_audio(monkeypatch: pytest.MonkeyPatch):
+    _patch_settings(monkeypatch, _settings())
+
+    with TestClient(create_app()) as client:
+        with client.websocket_connect("/v1/audio/conversations") as ws:
+            assert _start_session(ws)["type"] == "session.created"
+
+            ws.send_json({"type": "ping"})
+            assert ws.receive_json() == {"type": "pong"}
+
+            ws.send_bytes(b"not-started")
+            error = ws.receive_json()
+            assert error["type"] == "error"
+            assert error["error"]["code"] == "unexpected_audio"
+
+            ws.send_json({"type": "input_audio.start"})
+            assert ws.receive_json()["type"] == "input_audio.started"
+            ws.send_bytes(b"RIFF")
+            ws.send_json({"type": "input_audio.clear"})
+            assert ws.receive_json() == {"type": "input_audio.cleared"}
+
+
+def test_conversation_empty_transcript_returns_error(monkeypatch: pytest.MonkeyPatch):
+    _patch_settings(monkeypatch, _settings())
+
+    import gateway.audio as audio_module
+
+    async def fake_transcribe(**kwargs: Any) -> dict[str, Any]:
+        return {"text": "   ", "language": "en"}
+
+    monkeypatch.setattr(audio_module, "transcribe_audio_bytes_with_whisper", fake_transcribe)
+
+    with TestClient(create_app()) as client:
+        with client.websocket_connect("/v1/audio/conversations") as ws:
+            assert _start_session(ws)["type"] == "session.created"
+            ws.send_json({"type": "input_audio.start"})
+            assert ws.receive_json()["type"] == "input_audio.started"
+            ws.send_bytes(b"RIFF")
+            ws.send_json({"type": "input_audio.commit"})
+
+            error = ws.receive_json()
+            assert error["type"] == "error"
+            assert error["error"]["code"] == "empty_transcript"
+
+
+def test_conversation_ollama_stream_error_returns_error(monkeypatch: pytest.MonkeyPatch):
+    _patch_settings(monkeypatch, _settings())
+
+    import gateway.audio as audio_module
+
+    async def fake_transcribe(**kwargs: Any) -> dict[str, Any]:
+        return {"text": "hello", "language": "en"}
+
+    async def fail_speech(**kwargs: Any) -> bytes:
+        raise AssertionError("speech should not run after stream failure")
+
+    monkeypatch.setattr(audio_module, "transcribe_audio_bytes_with_whisper", fake_transcribe)
+    monkeypatch.setattr(audio_module, "synthesize_speech_with_chatterbox", fail_speech)
+
+    with respx.mock(base_url=OLLAMA_BASE) as mock:
+        mock.post("/api/chat").mock(
+            return_value=httpx.Response(
+                200,
+                content=_ndjson(
+                    {
+                        "model": "qwen3.5:9b",
+                        "message": {"role": "assistant", "content": "partial"},
+                        "done": False,
+                    }
+                ),
+            )
+        )
+        with TestClient(create_app()) as client:
+            with client.websocket_connect("/v1/audio/conversations") as ws:
+                assert _start_session(ws)["type"] == "session.created"
+                ws.send_json({"type": "input_audio.start"})
+                assert ws.receive_json()["type"] == "input_audio.started"
+                ws.send_bytes(b"RIFF")
+                ws.send_json({"type": "input_audio.commit"})
+
+                assert ws.receive_json()["type"] == "transcript.completed"
+                assert ws.receive_json()["type"] == "response.started"
+                assert ws.receive_json() == {"type": "response.text.delta", "delta": "partial"}
+                error = ws.receive_json()
+                assert error["type"] == "error"
+                assert error["error"]["code"] == "ollama_invalid_response"
+
+
+def test_conversation_tts_error_returns_error(monkeypatch: pytest.MonkeyPatch):
+    _patch_settings(monkeypatch, _settings())
+
+    import gateway.audio as audio_module
+
+    async def fake_transcribe(**kwargs: Any) -> dict[str, Any]:
+        return {"text": "hello", "language": "en"}
+
+    async def fail_speech(**kwargs: Any) -> bytes:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": {
+                    "message": "TTS failed",
+                    "type": "upstream_error",
+                    "code": "audio_model_error",
+                }
+            },
+        )
+
+    monkeypatch.setattr(audio_module, "transcribe_audio_bytes_with_whisper", fake_transcribe)
+    monkeypatch.setattr(audio_module, "synthesize_speech_with_chatterbox", fail_speech)
+
+    with respx.mock(base_url=OLLAMA_BASE) as mock:
+        mock.post("/api/chat").mock(
+            return_value=httpx.Response(
+                200,
+                content=_ndjson(
+                    {
+                        "model": "qwen3.5:9b",
+                        "message": {"role": "assistant", "content": "**Hello**"},
+                        "done": False,
+                    },
+                    {
+                        "model": "qwen3.5:9b",
+                        "message": {"role": "assistant", "content": ""},
+                        "done": True,
+                        "prompt_eval_count": 2,
+                        "eval_count": 1,
+                    },
+                ),
+            )
+        )
+        with TestClient(create_app()) as client:
+            with client.websocket_connect("/v1/audio/conversations") as ws:
+                assert _start_session(ws)["type"] == "session.created"
+                ws.send_json({"type": "input_audio.start"})
+                assert ws.receive_json()["type"] == "input_audio.started"
+                ws.send_bytes(b"RIFF")
+                ws.send_json({"type": "input_audio.commit"})
+
+                assert ws.receive_json()["type"] == "transcript.completed"
+                assert ws.receive_json()["type"] == "response.started"
+                assert ws.receive_json() == {"type": "response.text.delta", "delta": "**Hello**"}
+                completed_text = ws.receive_json()
+                assert completed_text["type"] == "response.text.completed"
+                assert completed_text["speech_text"] == "Hello"
+                assert ws.receive_json() == {"type": "response.audio.started", "format": "wav"}
+                error = ws.receive_json()
+                assert error["type"] == "error"
+                assert error["error"]["code"] == "audio_model_error"
+
+
+def test_conversation_busy_and_cancel(monkeypatch: pytest.MonkeyPatch):
+    _patch_settings(monkeypatch, _settings())
+
+    import gateway.audio as audio_module
+
+    async def slow_transcribe(**kwargs: Any) -> dict[str, Any]:
+        import asyncio
+
+        await asyncio.sleep(1)
+        return {"text": "hello", "language": "en"}
+
+    monkeypatch.setattr(audio_module, "transcribe_audio_bytes_with_whisper", slow_transcribe)
+
+    with TestClient(create_app()) as client:
+        with client.websocket_connect("/v1/audio/conversations") as ws:
+            assert _start_session(ws)["type"] == "session.created"
+            ws.send_json({"type": "input_audio.start"})
+            assert ws.receive_json()["type"] == "input_audio.started"
+            ws.send_bytes(b"RIFF")
+            ws.send_json({"type": "input_audio.commit"})
+
+            ws.send_json({"type": "input_audio.start"})
+            busy = ws.receive_json()
+            assert busy["type"] == "error"
+            assert busy["error"]["code"] == "busy"
+
+            ws.send_json({"type": "response.cancel"})
+            assert ws.receive_json() == {"type": "response.cancelled"}

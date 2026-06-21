@@ -104,6 +104,9 @@ def _response_is_active(state: ConversationState) -> bool:
 def _speech_text_from_display(text: str) -> str:
     text = _CODE_FENCE_RE.sub(lambda match: match.group(1).strip(), text)
     text = _MARKDOWN_LINK_RE.sub(r"\1", text)
+    text = re.sub(r"(\*\*|__)(.*?)\1", r"\2", text)
+    text = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\1", text)
+    text = re.sub(r"(?<!_)_([^_]+)_(?!_)", r"\1", text)
     text = re.sub(r"`([^`]+)`", r"\1", text)
 
     cleaned_lines: list[str] = []

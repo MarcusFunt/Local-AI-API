@@ -161,9 +161,9 @@ class TestIngestEndpointRagDisabled:
                 resp = await ac.post(
                     "/v1/documents/ingest",
                     files={"file": ("test.txt", b"some content", "text/plain")},
-                )
+            )
             assert resp.status_code == 503
-            assert "RAG is not enabled" in resp.json()["detail"]
+            assert "RAG is not enabled" in resp.json()["error"]["message"]
 
         await client_module.close()
 
