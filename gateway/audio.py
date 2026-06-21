@@ -135,6 +135,39 @@ async def _read_upload_to_tempfile(file: UploadFile, max_bytes: int | None = Non
     return temp_path
 
 
+async def _write_bytes_to_tempfile(
+    data: bytes,
+    filename: str | None = None,
+    max_bytes: int | None = None,
+) -> Path:
+    bytes_seen = len(data)
+    if max_bytes is not None and bytes_seen > max_bytes:
+        raise _audio_exception(
+            413,
+            f"Audio upload too large ({bytes_seen} bytes > {max_bytes} byte limit).",
+            "request_too_large",
+        )
+    if bytes_seen == 0:
+        raise _audio_exception(
+            422,
+            "Audio upload is empty.",
+            "empty_audio_file",
+        )
+
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=_audio_suffix(filename))
+    temp_path = Path(temp.name)
+    try:
+        temp.write(data)
+    except Exception:
+        temp.close()
+        temp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        if not temp.closed:
+            temp.close()
+    return temp_path
+
+
 def _load_whisper_model(model_name: str, device: str, download_root: str | None = None) -> Any:
     try:
         import whisper
@@ -153,15 +186,14 @@ def _load_whisper_model(model_name: str, device: str, download_root: str | None 
     return model
 
 
-async def transcribe_with_whisper(
-    file: UploadFile,
+async def _transcribe_path_with_whisper(
+    temp_path: Path,
     resolved_model: str,
     settings: Settings,
     language: str | None = None,
     prompt: str | None = None,
     temperature: float | None = None,
 ) -> dict[str, Any]:
-    temp_path = await _read_upload_to_tempfile(file, max_bytes=settings.max_request_body_bytes)
     device = _select_device(settings.whisper_device)
     whisper_cache_dir = settings.whisper_cache_dir.strip() or None
 
@@ -186,6 +218,53 @@ async def transcribe_with_whisper(
     except Exception as exc:
         logger.warning("Whisper transcription failed: %s", exc)
         raise _model_runtime_exception("Whisper transcription", exc) from exc
+
+
+async def transcribe_with_whisper(
+    file: UploadFile,
+    resolved_model: str,
+    settings: Settings,
+    language: str | None = None,
+    prompt: str | None = None,
+    temperature: float | None = None,
+) -> dict[str, Any]:
+    temp_path = await _read_upload_to_tempfile(file, max_bytes=settings.max_request_body_bytes)
+    try:
+        return await _transcribe_path_with_whisper(
+            temp_path=temp_path,
+            resolved_model=resolved_model,
+            settings=settings,
+            language=language,
+            prompt=prompt,
+            temperature=temperature,
+        )
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+async def transcribe_audio_bytes_with_whisper(
+    audio_bytes: bytes,
+    filename: str,
+    resolved_model: str,
+    settings: Settings,
+    language: str | None = None,
+    prompt: str | None = None,
+    temperature: float | None = None,
+) -> dict[str, Any]:
+    temp_path = await _write_bytes_to_tempfile(
+        audio_bytes,
+        filename=filename,
+        max_bytes=settings.max_request_body_bytes,
+    )
+    try:
+        return await _transcribe_path_with_whisper(
+            temp_path=temp_path,
+            resolved_model=resolved_model,
+            settings=settings,
+            language=language,
+            prompt=prompt,
+            temperature=temperature,
+        )
     finally:
         temp_path.unlink(missing_ok=True)
 

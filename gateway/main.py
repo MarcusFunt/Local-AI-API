@@ -18,6 +18,7 @@ from . import client as ollama_client
 from .config import settings
 from .routes.audio import router as audio_router
 from .routes.chat import router as chat_router
+from .routes.conversation import router as conversation_router
 from .routes.documents import router as documents_router
 from .routes.health import router as health_router
 from .routes.models import router as models_router
@@ -112,7 +113,7 @@ class AuthMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        if scope["type"] not in {"http", "websocket"}:
             await self.app(scope, receive, send)
             return
 
@@ -120,13 +121,16 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if scope.get("path") in _HEALTH_PATHS:
+        if scope["type"] == "http" and scope.get("path") in _HEALTH_PATHS:
             await self.app(scope, receive, send)
             return
 
         headers = Headers(scope=scope)
         auth_header = headers.get("authorization", "")
         if not auth_header.startswith("Bearer "):
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1008})
+                return
             response = JSONResponse(
                 status_code=401,
                 content={
@@ -142,6 +146,9 @@ class AuthMiddleware:
 
         token = auth_header[len("Bearer "):]
         if not compare_digest(token, settings.api_key):
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1008})
+                return
             response = JSONResponse(
                 status_code=401,
                 content={
@@ -224,6 +231,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(models_router)
     app.include_router(audio_router)
+    app.include_router(conversation_router)
     app.include_router(health_router)
     app.include_router(status_router)
     app.include_router(documents_router)

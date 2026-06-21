@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -171,3 +171,47 @@ class AudioSpeechRequest(BaseModel):
     language: str | None = None
     exaggeration: float | None = None
     cfg_weight: float | None = None
+
+
+class ConversationSessionStart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["session.start"]
+    model: str | None = None
+    whisper_model: str | None = None
+    tts_model: str | None = None
+    input_audio_format: str = "wav"
+    language: str | None = None
+    instructions: str | None = None
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    top_p: float | None = Field(default=None, ge=0, le=1)
+    max_tokens: int | None = Field(default=512, gt=0)
+    seed: int | None = None
+    use_rag: bool = False
+    max_history_messages: int = Field(default=20, ge=2, le=100)
+    exaggeration: float | None = None
+    cfg_weight: float | None = None
+
+    @field_validator("model", "whisper_model", "tts_model", "language")
+    @classmethod
+    def strip_optional_strings(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        value = value.strip()
+        return value or None
+
+    @field_validator("instructions")
+    @classmethod
+    def strip_instructions(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        value = value.strip()
+        return value or None
+
+    @field_validator("input_audio_format")
+    @classmethod
+    def validate_input_audio_format(cls, value: str | None) -> str:
+        normalized = (value or "wav").strip().lower()
+        if normalized not in {"wav", "webm"}:
+            raise ValueError("Unsupported input_audio_format. Use wav or webm.")
+        return normalized

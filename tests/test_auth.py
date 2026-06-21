@@ -19,6 +19,7 @@ def _make_client(settings: Settings) -> httpx.AsyncClient:
     import gateway.routes.health as health_module
     import gateway.routes.chat as chat_module
     import gateway.routes.audio as audio_module
+    import gateway.routes.conversation as conversation_module
     import gateway.routes.status as status_module
     from gateway import main as main_module
 
@@ -29,6 +30,7 @@ def _make_client(settings: Settings) -> httpx.AsyncClient:
     health_module.settings = settings
     chat_module.settings = settings
     audio_module.settings = settings
+    conversation_module.settings = settings
     status_module.settings = settings
     main_module.settings = settings
 
@@ -55,7 +57,26 @@ CHAT_PAYLOAD = {
 
 @pytest.fixture(autouse=True)
 async def _cleanup():
+    import gateway.config as cfg_module
+    import gateway.routes.health as health_module
+    import gateway.routes.chat as chat_module
+    import gateway.routes.audio as audio_module
+    import gateway.routes.conversation as conversation_module
+    import gateway.routes.status as status_module
+    from gateway import main as main_module
+
+    original_settings = {
+        cfg_module: cfg_module.settings,
+        health_module: health_module.settings,
+        chat_module: chat_module.settings,
+        audio_module: audio_module.settings,
+        conversation_module: conversation_module.settings,
+        status_module: status_module.settings,
+        main_module: main_module.settings,
+    }
     yield
+    for module, settings in original_settings.items():
+        module.settings = settings
     await client_module.close()
 
 

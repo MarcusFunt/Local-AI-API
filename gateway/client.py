@@ -297,11 +297,11 @@ async def proxy_streaming(
     settings: Settings,
 ) -> AsyncGenerator[str, None]:
     """Open an Ollama stream and return an OpenAI-compatible SSE generator."""
-    client = _get_client()
-    body = _build_ollama_body(resolved_model, request_dict, stream=True)
+    events = await proxy_streaming_events(resolved_model, request_dict, settings)
 
     completion_id = _make_completion_id()
     created = int(time.time())
+    include_usage = _stream_include_usage(request_dict.get("stream_options"))
 
     def _chunk(delta: dict[str, Any], finish_reason: str | None) -> str:
         chunk = ChatCompletionChunk(
@@ -318,18 +318,16 @@ async def proxy_streaming(
         )
         return f"data: {chunk.model_dump_json(exclude_none=True)}\n\n"
 
-    def _usage_chunk(data: dict[str, Any]) -> str:
-        prompt_tokens = data.get("prompt_eval_count", 0) or 0
-        completion_tokens = data.get("eval_count", 0) or 0
+    def _usage_chunk(usage: dict[str, int]) -> str:
         chunk = ChatCompletionChunk(
             id=completion_id,
             created=created,
             model=resolved_model,
             choices=[],
             usage=ChatCompletionUsage(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=prompt_tokens + completion_tokens,
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                total_tokens=usage.get("total_tokens", 0),
             ),
         )
         return f"data: {chunk.model_dump_json(exclude_none=True)}\n\n"
@@ -343,6 +341,35 @@ async def proxy_streaming(
             }
         }
         return f"event: error\ndata: {json.dumps(payload)}\n\n"
+
+    async def generate() -> AsyncGenerator[str, None]:
+        async for event in events:
+            event_type = event.get("type")
+            if event_type == "delta":
+                yield _chunk(event.get("delta", {}), finish_reason=None)
+            elif event_type == "done":
+                yield _chunk({}, finish_reason=event.get("finish_reason", "stop"))
+                if include_usage:
+                    yield _usage_chunk(event.get("usage", {}))
+                yield "data: [DONE]\n\n"
+            elif event_type == "error":
+                error = event.get("error", {})
+                yield _error_event(
+                    str(error.get("message", "Ollama stream failed.")),
+                    str(error.get("code", "ollama_error")),
+                )
+
+    return generate()
+
+
+async def proxy_streaming_events(
+    resolved_model: str,
+    request_dict: dict[str, Any],
+    settings: Settings,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Open an Ollama stream and return structured OpenAI-style stream events."""
+    client = _get_client()
+    body = _build_ollama_body(resolved_model, request_dict, stream=True)
 
     logger.info("Sending streaming request to Ollama (model=%s)", resolved_model)
 
@@ -362,13 +389,12 @@ async def proxy_streaming(
             await stream_context.__aexit__(None, None, None)
         raise
 
-    async def generate() -> AsyncGenerator[str, None]:
+    async def generate() -> AsyncGenerator[dict[str, Any], None]:
         try:
             # First chunk carries the role
-            yield _chunk({"role": "assistant"}, finish_reason=None)
+            yield {"type": "delta", "delta": {"role": "assistant"}}
 
             completed = False
-            include_usage = _stream_include_usage(request_dict.get("stream_options"))
             async for raw_line in response.aiter_lines():
                 raw_line = raw_line.strip()
                 if not raw_line:
@@ -395,22 +421,50 @@ async def proxy_streaming(
                     if tool_calls:
                         delta["tool_calls"] = tool_calls
                     if delta:
-                        yield _chunk(delta, finish_reason=None)
+                        yield {"type": "delta", "delta": delta}
                 else:
-                    yield _chunk({}, finish_reason=_finish_reason_from_ollama(ollama_chunk))
-                    if include_usage:
-                        yield _usage_chunk(ollama_chunk)
-                    yield "data: [DONE]\n\n"
+                    prompt_tokens = ollama_chunk.get("prompt_eval_count", 0) or 0
+                    completion_tokens = ollama_chunk.get("eval_count", 0) or 0
+                    yield {
+                        "type": "done",
+                        "finish_reason": _finish_reason_from_ollama(ollama_chunk),
+                        "usage": {
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                            "total_tokens": prompt_tokens + completion_tokens,
+                        },
+                    }
                     completed = True
 
             if not completed:
-                yield _error_event("Ollama stream ended before completion.", "ollama_invalid_response")
+                yield {
+                    "type": "error",
+                    "error": {
+                        "message": "Ollama stream ended before completion.",
+                        "type": "upstream_error",
+                        "code": "ollama_invalid_response",
+                    },
+                }
         except httpx.TimeoutException as exc:
             logger.warning("Ollama stream timed out after response started: %s", exc)
-            yield _error_event("Ollama stream timed out.", "ollama_timeout")
+            yield {
+                "type": "error",
+                "error": {
+                    "message": "Ollama stream timed out.",
+                    "type": "upstream_error",
+                    "code": "ollama_timeout",
+                },
+            }
         except httpx.ConnectError as exc:
             logger.warning("Ollama stream connection failed after response started: %s", exc)
-            yield _error_event("Ollama stream connection failed.", "ollama_error")
+            yield {
+                "type": "error",
+                "error": {
+                    "message": "Ollama stream connection failed.",
+                    "type": "upstream_error",
+                    "code": "ollama_error",
+                },
+            }
         finally:
             await stream_context.__aexit__(None, None, None)
 

@@ -377,6 +377,38 @@ curl http://localhost:8080/v1/audio/speech \
   --output speech.wav
 ```
 
+Realtime speech-to-speech conversation WebSocket:
+
+```text
+ws://localhost:8080/v1/audio/conversations
+```
+
+The first WebSocket message must be a JSON session frame:
+
+```json
+{
+  "type": "session.start",
+  "model": "main",
+  "whisper_model": "small",
+  "tts_model": "chatterbox",
+  "input_audio_format": "wav",
+  "language": "en",
+  "max_tokens": 512
+}
+```
+
+After `session.created`, send `input_audio.start`, one or more binary audio
+frames, then `input_audio.commit`. The server responds with transcript events,
+assistant text deltas, a completed `speech_text`, a binary WAV frame, and final
+completion metadata. The conversation text contract is plain UTF-8 speech text:
+metadata stays in JSON events, while only cleaned `speech_text` is sent to TTS.
+
+This v1 API is realtime at the transport/session layer, but speech processing is
+explicit-turn based: Whisper runs after `input_audio.commit`, and Chatterbox
+returns one WAV response after assistant text completes. Lower-latency partial
+transcription or sentence-level TTS can be added later without changing the
+existing HTTP audio endpoints.
+
 End-to-end dev-model check through the status endpoint:
 
 ```bash
@@ -574,6 +606,30 @@ The local speech endpoint currently returns WAV audio only. If a client sends
 `response_format=mp3`, the gateway returns HTTP 422 instead of silently changing
 the requested format. Chatterbox voice selection is not exposed by this gateway;
 requests with a `voice` value also return HTTP 422.
+
+### Speech-to-speech conversation mode
+
+`/v1/audio/conversations` is a WebSocket API for one persistent spoken
+conversation. It reuses the same local components as the HTTP endpoints:
+Whisper for committed user-audio turns, Ollama chat streaming for assistant text,
+and Chatterbox for WAV speech output.
+
+Supported client events:
+
+| Event | Purpose |
+|---|---|
+| `session.start` | Opens the session and chooses chat/STT/TTS models. |
+| `input_audio.start` | Starts collecting binary user-audio frames. |
+| binary frames | Carry WAV or WebM audio bytes for the active turn. |
+| `input_audio.commit` | Ends the current user turn and starts STT -> chat -> TTS. |
+| `input_audio.clear` | Drops the active input buffer. |
+| `response.cancel` | Cancels the active response task when possible. |
+| `ping` | Returns `pong`. |
+| `session.close` | Closes the WebSocket. |
+
+Supported server events include `transcript.completed`, `response.text.delta`,
+`response.text.completed`, `response.audio.started`, a binary WAV frame,
+`response.audio.completed`, `response.completed`, and `error`.
 
 ---
 

@@ -65,6 +65,7 @@ async def client(default_settings: Settings, monkeypatch: pytest.MonkeyPatch):
     import gateway.routes.health as health_module
     import gateway.routes.chat as chat_module
     import gateway.routes.audio as audio_module
+    import gateway.routes.conversation as conversation_module
     import gateway.routes.status as status_module
     import gateway.client as client_module
 
@@ -72,6 +73,7 @@ async def client(default_settings: Settings, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(health_module, "settings", default_settings)
     monkeypatch.setattr(chat_module, "settings", default_settings)
     monkeypatch.setattr(audio_module, "settings", default_settings)
+    monkeypatch.setattr(conversation_module, "settings", default_settings)
     monkeypatch.setattr(status_module, "settings", default_settings)
 
     # Patch the module-level settings used by middleware (read at request time)
