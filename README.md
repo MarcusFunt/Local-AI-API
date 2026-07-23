@@ -181,6 +181,12 @@ The Windows script:
 - configures Agent Zero for Tailscale Serve on HTTPS port `8443`
 - installs a per-user Scheduled Task using the selected update schedule, defaulting to logon and daily using the same script
 
+The Windows update task runs as the current user, so its scheduled triggers fire
+while that user is logged on (Docker Desktop itself requires an interactive
+session anyway). On a server you want to update while logged off, prefer the
+Linux systemd path, which runs the updater as a system service independent of any
+login.
+
 AMD/ROCm Docker acceleration is Linux-only in this project; Windows hosts use CPU unless NVIDIA Docker GPU access is available.
 
 Useful installer options:
@@ -225,13 +231,34 @@ Zero receives the harmless dummy key `unused`.
 
 ---
 
+## One-click launchers (Windows)
+
+If you would rather not touch a terminal, two double-clickable scripts sit at the
+repository root:
+
+| File | What it does |
+|---|---|
+| `Install.cmd` | Opens the graphical configurator (choose models, default profile, auth, Tailscale, accelerator, and the auto-update schedule), then runs the Docker install/update. Run this first, and again whenever you want to change configuration. |
+| `Start.cmd` | Starts the already-installed stack (Ollama + gateway + Agent Zero) and opens the status page. It does not rebuild, re-test, or sync the repository, so it is the fast way to bring everything back up after a reboot. |
+
+`Install.cmd` needs Python 3.11+ on `PATH` (it launches the Tkinter GUI); it
+prints download instructions if Python is missing. `Start.cmd` only needs Docker
+Desktop and starts it automatically if it is installed but not running.
+
+On Linux/macOS the equivalents are `python3 scripts/install_gui.py` for
+configuration and `bash scripts/start-stack.sh` for a fast start.
+
+---
+
 ## Graphical installer
 
-Run the Tkinter GUI when you want to choose models, the default profile, optional bearer-token auth, mandatory Agent Zero support, Tailscale setup, accelerator profile, and repository auto-update cadence:
+Run the Tkinter GUI directly when you want to choose models, the default profile, optional bearer-token auth, mandatory Agent Zero support, Tailscale setup, accelerator profile, and repository auto-update cadence:
 
 ```powershell
 python .\scripts\install_gui.py
 ```
+
+On Windows you can also just double-click `Install.cmd`, which launches this same GUI.
 
 On Linux, use `python3 scripts/install_gui.py` and install your distribution's Tkinter package if needed. The GUI writes `.env`, stores its own UI state in `.local/install-gui.json`, and then runs the same Docker installer scripts described above.
 
@@ -241,9 +268,20 @@ The model selector writes `OLLAMA_MODELS` using the approved model tags only. Th
 
 ## Installation
 
+Run the gateway outside Docker inside a virtual environment so its pinned
+dependencies do not collide with other Python packages on your machine (the
+gateway pins exact `fastapi`/`starlette`/`pydantic` versions, and a newer
+globally-installed Starlette will break the import):
+
 ```bash
 git clone https://github.com/MarcusFunt/Local-AI-API.git
 cd Local-AI-API
+
+python -m venv .venv
+# Linux/macOS:
+source .venv/bin/activate
+# Windows PowerShell:
+#   .\.venv\Scripts\Activate.ps1
 
 pip install -r requirements.txt
 

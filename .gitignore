@@ -12,6 +12,10 @@ build/
 htmlcov/
 .claude/
 
+# GUI installer state and local runtime logs.
+.local/
+logs/
+
 # Local bootstrap identity files copied onto removable media.
 authorized_keys
 tailscale-auth-key.txt
