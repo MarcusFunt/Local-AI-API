@@ -82,6 +82,7 @@ def test_compose_does_not_publish_raw_ollama_port(files: list[str]):
     for service in config["services"].values():
         for port in service.get("ports", []):
             assert port.get("target") != 11434
+            assert port.get("published") != "11434"
 
 
 @pytest.mark.parametrize("files", COMPOSE_VARIANTS.values())
@@ -94,7 +95,6 @@ def test_autoheal_watchdog_monitors_gateway(files: list[str]):
     assert "autoheal" in services, "autoheal watchdog service is missing"
     assert services["autoheal"]["image"].startswith("willfarrell/autoheal")
     assert services["gateway"].get("labels", {}).get("autoheal") == "true"
-            assert port.get("published") != "11434"
 
 
 @pytest.mark.parametrize("files", COMPOSE_VARIANTS.values())
