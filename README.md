@@ -46,6 +46,7 @@ Tailscale Serve acts as the TLS terminator and access-control layer. The gateway
 - [Tailscale](https://tailscale.com/download) installed for private remote access
 - Python 3.11 or later only if you run the gateway outside Docker
 - [Ollama](https://ollama.com/download), FFmpeg, and audio runtime libraries only if you run outside Docker
+- **Disk:** the default full stack uses ~50–60 GB (Low Compute Mode ~15–20 GB). See [`docs/disk-and-cleanup.md`](docs/disk-and-cleanup.md) for sizing and how to reclaim space — including the Windows/WSL2 disk that grows but never shrinks on its own.
 
 ---
 
