@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import platform
 import socket
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any
 
 import httpx
@@ -162,6 +164,17 @@ def _runtime_status() -> dict[str, Any]:
     }
 
 
+def _last_update_run() -> dict[str, Any] | None:
+    """Read the marker the installer writes after each scheduled/manual update
+    run so a silently-failed auto-update is visible on the status page."""
+    marker = Path(__file__).resolve().parents[2] / ".local" / "last-update.json"
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 async def _build_status_payload() -> dict[str, Any]:
     ollama, ollama_models = await _fetch_ollama_tags()
     profiles = _profile_statuses(ollama_models)
@@ -177,6 +190,7 @@ async def _build_status_payload() -> dict[str, Any]:
         "models": profiles,
         "repository": repository,
         "last_dev_check": _LAST_DEV_CHECK,
+        "last_update_run": _last_update_run(),
     }
 
 

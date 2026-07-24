@@ -15,6 +15,7 @@ SKIP_TAILSCALE_SERVE="${LOCAL_AI_API_SKIP_TAILSCALE_SERVE:-0}"
 NO_SCHEDULED_TASK="${LOCAL_AI_API_NO_SCHEDULED_TASK:-0}"
 LOW_COMPUTE="${LOCAL_AI_API_LOW_COMPUTE:-0}"
 AGENT_ZERO_ENABLED=1
+REPO_ROOT_DIR=""
 UPDATE_SCHEDULE="${LOCAL_AI_API_UPDATE_SCHEDULE:-default}"
 UPDATE_TIME="${LOCAL_AI_API_UPDATE_TIME:-03:00}"
 UPDATE_WEEKLY_DAY="${LOCAL_AI_API_UPDATE_WEEKLY_DAY:-Sunday}"
@@ -32,6 +33,37 @@ die() {
 have() {
   command -v "$1" >/dev/null 2>&1
 }
+
+write_update_marker() {
+  local status="$1"
+  local error="${2:-}"
+  [[ -n "${REPO_ROOT_DIR}" ]] || return 0
+  local dir="${REPO_ROOT_DIR}/.local"
+  mkdir -p "${dir}" 2>/dev/null || return 0
+  local scheduled="false"
+  if [[ "${LOCAL_AI_API_SYSTEMD:-}" == "1" ]]; then
+    scheduled="true"
+  fi
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ -n "${error}" ]]; then
+    printf '{"status":"%s","scheduled":%s,"finished_at":"%s","error":"%s"}\n' \
+      "${status}" "${scheduled}" "${ts}" "${error}" > "${dir}/last-update.json"
+  else
+    printf '{"status":"%s","scheduled":%s,"finished_at":"%s"}\n' \
+      "${status}" "${scheduled}" "${ts}" > "${dir}/last-update.json"
+  fi
+}
+
+on_exit() {
+  local rc=$?
+  if [[ "${rc}" == "0" ]]; then
+    write_update_marker "passed"
+  else
+    write_update_marker "failed" "install/update failed (exit ${rc}); see: journalctl -u local-ai-api-update.service"
+  fi
+}
+trap on_exit EXIT
 
 parse_args() {
   while [[ "$#" -gt 0 ]]; do
@@ -585,6 +617,7 @@ main() {
   acquire_lock
 
   root="$(repo_root)"
+  REPO_ROOT_DIR="${root}"
   cd "${root}"
   script_path="${root}/scripts/install-or-update.sh"
 

@@ -32,6 +32,7 @@ $script:InstallMutexAcquired = $false
 $script:AgentZeroPort = 50080
 $script:AgentZeroTailscaleHttpsPort = 8443
 $script:AgentZeroEnabled = $true
+$script:RepoRoot = $null
 
 if ($env:LOCAL_AI_API_SKIP_REPO_SYNC -eq "1") {
     $SkipRepoSync = $true
@@ -61,6 +62,36 @@ function Test-Command {
     param([Parameter(Mandatory = $true)][string]$Name)
 
     return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Write-UpdateMarker {
+    param(
+        [Parameter(Mandatory = $true)][string]$Status,
+        [string]$ErrorMessage = ""
+    )
+
+    if ([string]::IsNullOrWhiteSpace($script:RepoRoot)) {
+        return
+    }
+
+    try {
+        $localDir = Join-Path $script:RepoRoot ".local"
+        if (-not (Test-Path -LiteralPath $localDir)) {
+            New-Item -ItemType Directory -Path $localDir -Force | Out-Null
+        }
+        $marker = [ordered]@{
+            status      = $Status
+            scheduled   = [bool]$ScheduledRun
+            finished_at = (Get-Date).ToUniversalTime().ToString("o")
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ErrorMessage)) {
+            $marker.error = $ErrorMessage
+        }
+        ($marker | ConvertTo-Json -Compress) | Set-Content -LiteralPath (Join-Path $localDir "last-update.json") -Encoding UTF8
+    }
+    catch {
+        Write-Log "Could not write update marker: $($_.Exception.Message)"
+    }
 }
 
 function Invoke-External {
@@ -604,6 +635,7 @@ function Main {
     }
 
     $root = Get-RepoRoot
+    $script:RepoRoot = $root
     Set-Location $root
     $scriptPath = Join-Path $root "scripts\install-or-update.ps1"
 
@@ -639,9 +671,11 @@ function Main {
 
 try {
     Main
+    Write-UpdateMarker -Status "passed"
 }
 catch {
     Write-Log "ERROR: $($_.Exception.Message)"
+    Write-UpdateMarker -Status "failed" -ErrorMessage $_.Exception.Message
     exit 1
 }
 finally {

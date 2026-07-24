@@ -276,3 +276,34 @@ class TestStatusUpdate:
 
         assert resp.status_code == 409
         assert resp.json()["status"] == "running"
+
+
+async def test_last_update_run_reads_marker_and_tolerates_missing():
+    """The status payload surfaces the installer's update marker so a silently
+    failed scheduled auto-update is visible, and tolerates a missing marker."""
+    from pathlib import Path
+
+    from gateway.routes import status as status_module
+
+    marker = Path(status_module.__file__).resolve().parents[2] / ".local" / "last-update.json"
+    existed = marker.exists()
+    backup = marker.read_text(encoding="utf-8") if existed else None
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            '{"status": "failed", "scheduled": true, "finished_at": "2026-01-01T00:00:00Z"}',
+            encoding="utf-8",
+        )
+        assert status_module._last_update_run() == {
+            "status": "failed",
+            "scheduled": True,
+            "finished_at": "2026-01-01T00:00:00Z",
+        }
+
+        marker.unlink()
+        assert status_module._last_update_run() is None
+    finally:
+        if existed and backup is not None:
+            marker.write_text(backup, encoding="utf-8")
+        elif marker.exists():
+            marker.unlink()

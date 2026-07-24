@@ -373,6 +373,8 @@ The gateway container serves a small status GUI from the same FastAPI process:
 
 The status page shows gateway runtime health, Ollama connectivity, whether `main`, `small`, `dev`, `agent`, and `agent-utility` are pulled, the latest explicit dev-model inference check, and a Git update button when the gateway is running from a Git checkout. The check uses a fixed tiny prompt and does not log prompt content. The update button only performs a fast-forward pull; it refuses to overwrite local changes and reports when a restart or rebuild is recommended.
 
+`/status.json` also includes a `last_update_run` field: the installers write a `.local/last-update.json` marker after every scheduled or manual run (`passed`/`failed`, timestamp, and whether it was scheduled), so a nightly auto-update that failed silently — for example because a test flaked during the in-image gate — is visible here instead of only in the systemd journal or Task Scheduler history.
+
 If optional API-key auth is enabled, the status GUI is protected like other non-health routes. Health endpoints remain available without auth.
 
 ---
