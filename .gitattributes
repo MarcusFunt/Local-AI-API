@@ -1,0 +1,10 @@
+# Keep shell scripts LF on every platform. Without this, a Windows checkout
+# (core.autocrlf=true) rewrites them to CRLF, and a Docker image built on that
+# host bakes CRLF scripts into a Linux image, where bash fails with
+# "syntax error near unexpected token `$'{\r''". See tests/test_deployment.py.
+*.sh text eol=lf
+
+# Windows-only launchers stay CRLF.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf

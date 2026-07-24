@@ -10,7 +10,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-pytestmark = pytest.mark.asyncio
+# This module mixes synchronous chunker/extract tests with async endpoint
+# tests, so the asyncio marker is applied per async class below rather than at
+# module scope (a module-level mark would wrongly tag the sync tests, which
+# pytest-asyncio warns about).
 
 # ---------------------------------------------------------------------------
 # Chunker unit tests — no network, no mocking needed
@@ -133,6 +136,7 @@ def _make_app_with_rag_disabled():
     return create_app(), test_settings, client_module
 
 
+@pytest.mark.asyncio
 class TestIngestEndpointRagDisabled:
     async def test_ingest_endpoint_rag_disabled(self):
         """POST /v1/documents/ingest returns 503 when RAG_ENABLED=false."""
@@ -168,6 +172,7 @@ class TestIngestEndpointRagDisabled:
         await client_module.close()
 
 
+@pytest.mark.asyncio
 class TestSearchEndpointRagDisabled:
     async def test_search_endpoint_rag_disabled(self):
         """POST /v1/search returns 503 when RAG_ENABLED=false."""
@@ -201,6 +206,7 @@ class TestSearchEndpointRagDisabled:
         await client_module.close()
 
 
+@pytest.mark.asyncio
 class TestListDocumentsRagDisabled:
     async def test_list_documents_rag_disabled(self):
         """GET /v1/documents returns 503 when RAG_ENABLED=false."""
@@ -236,6 +242,7 @@ class TestListDocumentsRagDisabled:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestEmbedTexts:
     async def test_embed_texts_calls_ollama(self):
         """embed_texts calls /api/embed and returns the embeddings list."""
@@ -276,6 +283,7 @@ class TestEmbedTexts:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestQdrantStore:
     async def test_ensure_collection_creates_if_missing(self):
         """ensure_collection calls create_collection when the collection is absent."""
