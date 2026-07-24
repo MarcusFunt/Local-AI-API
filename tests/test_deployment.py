@@ -86,6 +86,18 @@ def test_compose_does_not_publish_raw_ollama_port(files: list[str]):
 
 
 @pytest.mark.parametrize("files", COMPOSE_VARIANTS.values())
+def test_autoheal_watchdog_monitors_gateway(files: list[str]):
+    """The autoheal sidecar must exist and the gateway must be labeled for it,
+    so a gateway that goes unhealthy (not just one that exits) is restarted."""
+    config = _compose_config(files)
+    services = config["services"]
+
+    assert "autoheal" in services, "autoheal watchdog service is missing"
+    assert services["autoheal"]["image"].startswith("willfarrell/autoheal")
+    assert services["gateway"].get("labels", {}).get("autoheal") == "true"
+
+
+@pytest.mark.parametrize("files", COMPOSE_VARIANTS.values())
 def test_gateway_keeps_ollama_loopback_and_shared_namespace(files: list[str]):
     config = _compose_config(files)
 
