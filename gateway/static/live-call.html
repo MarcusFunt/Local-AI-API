@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Live Call | Local AI API</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #0a0d12; color: #f2f5fa; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at top, #172238 0, #0a0d12 46rem); }
+    main { width: min(100%, 760px); padding: 32px; border: 1px solid #2c3749; border-radius: 24px; background: rgb(16 21 30 / 92%); box-shadow: 0 24px 70px rgb(0 0 0 / 35%); }
+    h1 { margin: 0; font-size: clamp(1.8rem, 5vw, 2.7rem); letter-spacing: -.04em; }
+    .lede { color: #adbacd; line-height: 1.55; margin: 8px 0 24px; }
+    .settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+    label { display: grid; gap: 6px; color: #bac7d8; font-size: .85rem; }
+    input, select, button { font: inherit; }
+    input, select { width: 100%; border: 1px solid #415067; border-radius: 10px; background: #0d131d; color: #f2f5fa; padding: 10px 12px; }
+    .key { grid-column: 1 / -1; }
+    button { cursor: pointer; border: 0; border-radius: 12px; color: #06111e; background: #72d1ff; padding: 12px 16px; font-weight: 700; }
+    button:hover:not(:disabled) { background: #a3e2ff; }
+    button:disabled { cursor: not-allowed; opacity: .52; }
+    #talk { width: 100%; min-height: 120px; margin: 18px 0 12px; font-size: 1.15rem; background: #9aefbf; }
+    #talk.recording { background: #ff9d9d; }
+    .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    #status { color: #bac7d8; min-height: 1.4em; }
+    #status.error { color: #ffaaaa; }
+    #transcript { min-height: 10rem; max-height: 22rem; overflow: auto; margin-top: 22px; padding: 14px; border-radius: 12px; background: #0b1018; line-height: 1.5; }
+    .turn { margin: 0 0 13px; white-space: pre-wrap; }
+    .turn:last-child { margin-bottom: 0; }
+    .you { color: #b4cdfd; } .assistant { color: #d5f6de; }
+    .hint { margin: 15px 0 0; font-size: .84rem; color: #8493a8; line-height: 1.45; }
+    @media (max-width: 540px) { main { padding: 22px; } .settings { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Live Call</h1>
+    <p class="lede">Talk with your local assistant in a persistent, private voice session. Hold the button while speaking; release it to send your turn.</p>
+    <div class="settings">
+      <label>Chat model
+        <select id="model"><option value="main">main</option><option value="small">small</option><option value="dev">dev</option></select>
+      </label>
+      <label>Whisper model
+        <select id="whisper"><option value="small">small</option><option value="base">base</option><option value="tiny">tiny</option></select>
+      </label>
+      <label class="key">API key (only when gateway auth is enabled)
+        <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Optional; kept in this browser tab only">
+      </label>
+    </div>
+    <div class="controls"><button id="connect" type="button">Start call</button><span id="status" role="status">Not connected</span></div>
+    <button id="talk" type="button" disabled>Hold to talk</button>
+    <section id="transcript" aria-live="polite" aria-label="Conversation transcript"></section>
+    <p class="hint">Microphone access requires HTTPS (Tailscale Serve provides it) or localhost. Audio is sent only while you hold the talk button.</p>
+  </main>
+  <script>
+    (() => {
+      const connectButton = document.querySelector('#connect');
+      const talkButton = document.querySelector('#talk');
+      const status = document.querySelector('#status');
+      const transcript = document.querySelector('#transcript');
+      const audio = new Audio();
+      let socket;
+      let recorder;
+      let chunks = [];
+      let assistantTurn;
+
+      function setStatus(message, error = false) {
+        status.textContent = message;
+        status.classList.toggle('error', error);
+      }
+
+      function addTurn(kind, text = '') {
+        const line = document.createElement('p');
+        line.className = `turn ${kind}`;
+        line.textContent = `${kind === 'you' ? 'You' : 'Assistant'}: ${text}`;
+        transcript.append(line);
+        transcript.scrollTop = transcript.scrollHeight;
+        return line;
+      }
+
+      function websocketUrl() {
+        const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${scheme}//${location.host}/v1/audio/conversations`;
+      }
+
+      function apiKeyProtocol() {
+        const key = document.querySelector('#api-key').value;
+        if (!key) return [];
+        const encoded = btoa(unescape(encodeURIComponent(key))).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+        return [`local-ai-api-key.${encoded}`];
+      }
+
+      function connect() {
+        if (socket && socket.readyState === WebSocket.OPEN) return;
+        setStatus('Connecting…');
+        connectButton.disabled = true;
+        try {
+          socket = new WebSocket(websocketUrl(), apiKeyProtocol());
+        } catch (error) {
+          setStatus(`Could not open call: ${error.message}`, true);
+          connectButton.disabled = false;
+          return;
+        }
+        socket.binaryType = 'blob';
+        socket.addEventListener('open', () => socket.send(JSON.stringify({
+          type: 'session.start', model: document.querySelector('#model').value,
+          whisper_model: document.querySelector('#whisper').value, tts_model: 'chatterbox',
+          input_audio_format: 'webm', language: navigator.language.split('-')[0], max_tokens: 256,
+        })));
+        socket.addEventListener('message', handleMessage);
+        socket.addEventListener('close', (event) => {
+          recorder?.stream.getTracks().forEach(track => track.stop());
+          recorder = undefined;
+          talkButton.disabled = true;
+          talkButton.classList.remove('recording');
+          connectButton.disabled = false;
+          connectButton.textContent = 'Start call';
+          setStatus(event.code === 1000 ? 'Call ended' : 'Call disconnected. Check the API key if auth is enabled.', event.code !== 1000);
+        });
+        socket.addEventListener('error', () => setStatus('Call connection failed.', true));
+      }
+
+      async function handleMessage(event) {
+        if (typeof event.data !== 'string') {
+          audio.src = URL.createObjectURL(event.data);
+          try { await audio.play(); } catch { setStatus('Assistant audio is ready; browser playback was blocked.', true); }
+          return;
+        }
+        const message = JSON.parse(event.data);
+        if (message.type === 'session.created') {
+          setStatus('Call connected');
+          connectButton.textContent = 'End call';
+          connectButton.disabled = false;
+          talkButton.disabled = false;
+        } else if (message.type === 'transcript.completed') {
+          addTurn('you', message.text);
+          setStatus('Assistant is responding…');
+        } else if (message.type === 'response.text.delta') {
+          if (!assistantTurn) assistantTurn = addTurn('assistant');
+          assistantTurn.textContent += message.delta;
+          transcript.scrollTop = transcript.scrollHeight;
+        } else if (message.type === 'response.completed') {
+          assistantTurn = undefined;
+          talkButton.disabled = false;
+          setStatus('Your turn');
+        } else if (message.type === 'error') {
+          assistantTurn = undefined;
+          talkButton.disabled = false;
+          setStatus(message.error?.message || 'The call encountered an error.', true);
+        }
+      }
+
+      async function startRecording() {
+        if (!socket || socket.readyState !== WebSocket.OPEN || recorder?.state === 'recording') return;
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          chunks = [];
+          recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+          recorder.addEventListener('dataavailable', event => { if (event.data.size) chunks.push(event.data); });
+          recorder.addEventListener('stop', () => {
+            const blob = new Blob(chunks, { type: 'audio/webm' });
+            if (blob.size) socket.send(blob);
+            socket.send(JSON.stringify({ type: 'input_audio.commit' }));
+            recorder.stream.getTracks().forEach(track => track.stop());
+            recorder = undefined;
+            talkButton.classList.remove('recording');
+            talkButton.textContent = 'Hold to talk';
+            talkButton.disabled = true;
+            setStatus('Sending your turn…');
+          }, { once: true });
+          socket.send(JSON.stringify({ type: 'input_audio.start' }));
+          recorder.start();
+          talkButton.classList.add('recording');
+          talkButton.textContent = 'Release to send';
+          setStatus('Listening…');
+        } catch (error) { setStatus(`Microphone unavailable: ${error.message}`, true); }
+      }
+
+      function stopRecording() { if (recorder?.state === 'recording') recorder.stop(); }
+      connectButton.addEventListener('click', () => {
+        if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'session.close' })); else connect();
+      });
+      talkButton.addEventListener('pointerdown', event => { event.preventDefault(); startRecording(); });
+      talkButton.addEventListener('pointerup', stopRecording);
+      talkButton.addEventListener('pointercancel', stopRecording);
+      window.addEventListener('keydown', event => { if (event.code === 'Space' && !event.repeat) { event.preventDefault(); startRecording(); } });
+      window.addEventListener('keyup', event => { if (event.code === 'Space') { event.preventDefault(); stopRecording(); } });
+    })();
+  </script>
+</body>
+</html>

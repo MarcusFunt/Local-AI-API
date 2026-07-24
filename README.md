@@ -448,6 +448,15 @@ Realtime speech-to-speech conversation WebSocket:
 ws://localhost:8080/v1/audio/conversations
 ```
 
+For a ready-to-use browser client, open `/live-call` on the gateway (for
+example, `https://your-tailnet-host.ts.net/live-call` through Tailscale Serve).
+It keeps one private WebSocket session open and provides push-to-talk turns,
+live transcript/text updates, and WAV playback. Microphone capture requires
+HTTPS or localhost. The page itself contains no gateway data and remains
+available when optional API-key auth is enabled; enter the API key in the page
+to authenticate the WebSocket connection. The key is sent in a WebSocket
+subprotocol rather than a URL and is retained only in the open browser tab.
+
 The first WebSocket message must be a JSON session frame:
 
 ```json
@@ -697,6 +706,11 @@ Supported server events include `transcript.completed`, `response.text.delta`,
 `response.text.completed`, `response.audio.started`, a binary WAV frame,
 `response.audio.completed`, `response.completed`, and `error`.
 
+The bundled `/live-call` client is intentionally push-to-talk. Each released
+turn is transcribed, answered, and synthesized before the next turn begins;
+this avoids sending microphone audio while the user is not speaking and matches
+the WebSocket API's committed-turn design.
+
 ---
 
 ## Enabling optional API-key auth
@@ -713,7 +727,7 @@ To enable it:
 
 2. Restart the gateway.
 
-3. All clients must now include the header:
+3. API clients must now include the header:
    ```
    Authorization: Bearer your-strong-random-key-here
    ```
