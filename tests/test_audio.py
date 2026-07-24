@@ -331,3 +331,26 @@ class TestAudioModelLoading:
 
         assert calls == 1
         assert results == [loaded_model, loaded_model]
+
+
+async def test_warm_audio_models_is_best_effort(monkeypatch: pytest.MonkeyPatch):
+    """Pre-warming must never crash startup: failures to load models are logged
+    and swallowed."""
+    import gateway.audio as audio_module
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("model load failed")
+
+    monkeypatch.setattr(audio_module, "_load_whisper_model", boom)
+    monkeypatch.setattr(audio_module, "_load_chatterbox_model", boom)
+
+    settings = SimpleNamespace(
+        default_whisper_model="base",
+        whisper_device="cpu",
+        whisper_cache_dir="",
+        chatterbox_model="chatterbox",
+        chatterbox_device="cpu",
+    )
+
+    # Both loads raise; warm_audio_models must not propagate.
+    audio_module.warm_audio_models(settings)
