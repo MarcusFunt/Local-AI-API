@@ -51,7 +51,7 @@ services:
         set -eu
         models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b}"
         pulled=""
-        for model in $$models qwen3:14b qwen3:8b; do
+        for model in $$models; do
           case " $$pulled " in
             *" $$model "*) continue ;;
           esac

@@ -266,6 +266,30 @@ The model selector writes `OLLAMA_MODELS` using the approved model tags only. Th
 
 ---
 
+## Low compute mode
+
+For a machine without a usable GPU (or when you just want a small footprint), enable **Low compute mode** — a single toggle that runs the whole stack lean:
+
+- **CPU only** — builds the gateway image with the CPU-only PyTorch wheel, which drops ~2.7 GB of unused CUDA libraries (the audio image goes from ~11.5 GB to ~4.8 GB).
+- **Smallest model only** — pulls just `qwen3.5:0.8b` (the `dev` profile) instead of the full set.
+- **Agent Zero off** — Agent Zero needs the large `qwen3:14b`/`qwen3:8b` models, so it is skipped in this mode.
+
+Speech-to-text (Whisper) and text-to-speech (Chatterbox) still work; they just run on CPU.
+
+Enable it in the graphical installer with the **"Low compute mode"** checkbox, or pass the flag directly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-or-update.ps1 -LowCompute
+```
+
+```bash
+./scripts/install-or-update.sh --low-compute
+```
+
+To go back to your GPU and the full model set, re-run the installer **without** the flag (or uncheck the box in the GUI).
+
+---
+
 ## Installation
 
 Run the gateway outside Docker inside a virtual environment so its pinned
