@@ -161,12 +161,43 @@ def _build_ollama_body(
     return body
 
 
+def _ollama_error_message(detail: Any) -> str:
+    if isinstance(detail, dict):
+        err = detail.get("error")
+        if isinstance(err, dict):
+            return str(err.get("message") or err)
+        if err is not None:
+            return str(err)
+    return str(detail)
+
+
+def _is_out_of_memory(message: str) -> bool:
+    lowered = message.lower()
+    return "more system memory" in lowered or ("requires more" in lowered and "memory" in lowered)
+
+
 def _raise_for_ollama_error(response: httpx.Response) -> None:
     if response.status_code >= 400:
         try:
             detail = response.json()
         except Exception:
             detail = response.text
+        message = _ollama_error_message(detail)
+        if _is_out_of_memory(message):
+            raise HTTPException(
+                status_code=507,
+                detail={
+                    "error": {
+                        "message": (
+                            f"Not enough memory to load this model: {message}. "
+                            "Choose a smaller model (for example the 'small' or 'dev' profile), "
+                            "or reinstall with Low Compute Mode."
+                        ),
+                        "type": "insufficient_memory",
+                        "code": "insufficient_memory",
+                    }
+                },
+            )
         raise HTTPException(
             status_code=502,
             detail={

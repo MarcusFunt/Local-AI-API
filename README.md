@@ -761,6 +761,7 @@ All errors use an OpenAI-compatible envelope so clients that parse OpenAI errors
 | Missing or wrong API key | 401 |
 | Request body too large | 413 |
 | Ollama returned an error | 502 |
+| Model needs more memory than is available | 507 |
 | Ollama unreachable | 502 |
 | Ollama timed out | 504 |
 | Ollama returned malformed JSON | 502 |
