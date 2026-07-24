@@ -10,6 +10,7 @@ x-gateway-environment: &gateway-environment
   WHISPER_CACHE_DIR: ${WHISPER_CACHE_DIR:-/models/cache/whisper}
   CHATTERBOX_MODEL: ${CHATTERBOX_MODEL:-chatterbox}
   CHATTERBOX_DEVICE: ${CHATTERBOX_DEVICE:-auto}
+  WARM_AUDIO_ON_START: ${WARM_AUDIO_ON_START:-false}
   XDG_CACHE_HOME: /models/cache
   HF_HOME: /models/cache/huggingface
   TORCH_HOME: /models/cache/torch

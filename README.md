@@ -607,6 +607,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `WHISPER_CACHE_DIR` | `/models/cache/whisper` in Docker | Whisper model cache directory. |
 | `CHATTERBOX_MODEL` | `chatterbox` | Chatterbox model used when speech requests omit `model`; allowed values are `chatterbox` and `chatterbox-multilingual`. |
 | `CHATTERBOX_DEVICE` | `auto` | Device for Chatterbox model loading (`auto`, `cpu`, `cuda`, or `mps`). |
+| `WARM_AUDIO_ON_START` | `false` | If `true`, load the Whisper and Chatterbox models in the background at startup so the first speech request is fast instead of paying a one-time download + load. |
 | `ENABLE_ARBITRARY_MODELS` | `false` | If `true`, any model name is forwarded to Ollama. |
 | `AGENT_ZERO_ENABLED` | `true` | Legacy compatibility flag. Agent Zero is mandatory; installers and status treat `agent` and `agent-utility` as required models. |
 | `AGENT_ZERO_PORT` | `50080` | Host loopback port for the Agent Zero UI. |

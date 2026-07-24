@@ -173,6 +173,15 @@ class AuthMiddleware:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ollama_client.init(settings)
+    if settings.warm_audio_on_start:
+        import threading
+
+        from .audio import warm_audio_models
+
+        logger.info("Pre-warming audio models in the background (WARM_AUDIO_ON_START=true).")
+        threading.Thread(
+            target=warm_audio_models, args=(settings,), name="warm-audio", daemon=True
+        ).start()
     logger.info("Gateway started (host=%s port=%s)", settings.host, settings.port)
     yield
     await ollama_client.close()
