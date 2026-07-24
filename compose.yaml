@@ -99,6 +99,23 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+    labels:
+      # Restarted by the autoheal watchdog below if it becomes unhealthy.
+      autoheal: "true"
+
+  # Watchdog. Docker's restart policy only reacts to a full crash/exit, so a
+  # gateway that hangs (process alive but HTTP dead) would otherwise stay up and
+  # broken. This sidecar watches containers labeled autoheal=true and restarts
+  # them when Docker's own healthcheck marks them unhealthy.
+  autoheal:
+    image: willfarrell/autoheal:latest
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: "15"
+      AUTOHEAL_START_PERIOD: "90"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   ollama-data:
