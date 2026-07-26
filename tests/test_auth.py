@@ -179,6 +179,11 @@ class TestAuthEnabled:
             resp = await ac.get("/status")
         assert resp.status_code == 401
 
+    async def test_live_call_page_is_available_without_a_bearer_header(self):
+        async with _make_client(self._auth_settings()) as ac:
+            resp = await ac.get("/live-call")
+        assert resp.status_code == 200
+
     async def test_status_json_requires_auth_no_header(self):
         async with _make_client(self._auth_settings()) as ac:
             resp = await ac.get("/status.json")

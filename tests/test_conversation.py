@@ -59,6 +59,18 @@ def _start_session(ws: Any, **overrides: Any) -> dict[str, Any]:
     return ws.receive_json()
 
 
+@pytest.mark.asyncio
+async def test_live_call_page_is_available(client: httpx.AsyncClient):
+    """The built-in browser call client is served without a separate frontend."""
+    resp = await client.get("/live-call")
+
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "Live Call" in resp.text
+    assert "/v1/audio/conversations" in resp.text
+    assert "MediaRecorder" in resp.text
+
+
 def test_conversation_happy_path(monkeypatch: pytest.MonkeyPatch):
     settings = _settings()
     _patch_settings(monkeypatch, settings)
@@ -197,6 +209,22 @@ def test_conversation_websocket_accepts_valid_auth(monkeypatch: pytest.MonkeyPat
         with client.websocket_connect(
             "/v1/audio/conversations",
             headers={"Authorization": "Bearer test-secret"},
+        ) as ws:
+            ws.send_json({"type": "session.start", "whisper_model": "tiny"})
+            assert ws.receive_json()["type"] == "session.created"
+
+
+def test_live_call_websocket_accepts_browser_api_key(monkeypatch: pytest.MonkeyPatch):
+    """Browser clients authenticate using the base64url WebSocket subprotocol."""
+    _patch_settings(
+        monkeypatch,
+        _settings(enable_api_key_auth=True, api_key="test-secret"),
+    )
+
+    with TestClient(create_app()) as client:
+        with client.websocket_connect(
+            "/v1/audio/conversations",
+            subprotocols=["local-ai-api-key.dGVzdC1zZWNyZXQ"],
         ) as ws:
             ws.send_json({"type": "session.start", "whisper_model": "tiny"})
             assert ws.receive_json()["type"] == "session.created"

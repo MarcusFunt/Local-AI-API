@@ -6,6 +6,7 @@ param(
     [switch]$SkipRepoSync,
     [switch]$SkipTailscaleServe,
     [switch]$AgentZero,
+    [switch]$LowCompute,
     [switch]$NoScheduledTask,
     [switch]$ScheduledRun,
     [ValidateSet("default", "none", "logon", "daily", "weekly", "every-hours")]
@@ -30,9 +31,18 @@ $script:InstallMutex = $null
 $script:InstallMutexAcquired = $false
 $script:AgentZeroPort = 50080
 $script:AgentZeroTailscaleHttpsPort = 8443
+$script:AgentZeroEnabled = $true
+$script:RepoRoot = $null
 
 if ($env:LOCAL_AI_API_SKIP_REPO_SYNC -eq "1") {
     $SkipRepoSync = $true
+}
+
+if ($LowCompute) {
+    # Low Compute Mode: CPU-only, and Agent Zero (which needs the large models)
+    # is disabled.
+    $Accelerator = "cpu"
+    $script:AgentZeroEnabled = $false
 }
 
 function Write-Log {
@@ -52,6 +62,36 @@ function Test-Command {
     param([Parameter(Mandatory = $true)][string]$Name)
 
     return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Write-UpdateMarker {
+    param(
+        [Parameter(Mandatory = $true)][string]$Status,
+        [string]$ErrorMessage = ""
+    )
+
+    if ([string]::IsNullOrWhiteSpace($script:RepoRoot)) {
+        return
+    }
+
+    try {
+        $localDir = Join-Path $script:RepoRoot ".local"
+        if (-not (Test-Path -LiteralPath $localDir)) {
+            New-Item -ItemType Directory -Path $localDir -Force | Out-Null
+        }
+        $marker = [ordered]@{
+            status      = $Status
+            scheduled   = [bool]$ScheduledRun
+            finished_at = (Get-Date).ToUniversalTime().ToString("o")
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ErrorMessage)) {
+            $marker.error = $ErrorMessage
+        }
+        ($marker | ConvertTo-Json -Compress) | Set-Content -LiteralPath (Join-Path $localDir "last-update.json") -Encoding UTF8
+    }
+    catch {
+        Write-Log "Could not write update marker: $($_.Exception.Message)"
+    }
 }
 
 function Invoke-External {
@@ -128,6 +168,9 @@ function Get-ReexecArguments {
     }
     if ($AgentZero) {
         $arguments += "-AgentZero"
+    }
+    if ($LowCompute) {
+        $arguments += "-LowCompute"
     }
     if ($NoScheduledTask) {
         $arguments += "-NoScheduledTask"
@@ -386,7 +429,9 @@ function Get-ComposeArgumentsForAccelerator {
         }
     }
 
-    $arguments += @("-f", (Join-Path $Root "compose.agent-zero.yaml"))
+    if ($script:AgentZeroEnabled) {
+        $arguments += @("-f", (Join-Path $Root "compose.agent-zero.yaml"))
+    }
 
     return $arguments
 }
@@ -422,8 +467,10 @@ function Start-Stack {
     Write-Log "Starting gateway."
     Invoke-DockerCompose -ComposeArguments $ComposeArguments -CommandArguments @("up", "-d", "gateway")
 
-    Write-Log "Starting Agent Zero."
-    Invoke-DockerCompose -ComposeArguments $ComposeArguments -CommandArguments @("up", "-d", "agent-zero")
+    if ($script:AgentZeroEnabled) {
+        Write-Log "Starting Agent Zero."
+        Invoke-DockerCompose -ComposeArguments $ComposeArguments -CommandArguments @("up", "-d", "agent-zero")
+    }
 }
 
 function Wait-ForUrl {
@@ -494,10 +541,12 @@ function Configure-TailscaleServe {
         Write-Log "Tailscale Serve command failed; leaving current serve config unchanged."
     }
 
-    Write-Log "Configuring Tailscale Serve for Agent Zero on HTTPS port $script:AgentZeroTailscaleHttpsPort."
-    & $tailscale serve --bg "--https=$script:AgentZeroTailscaleHttpsPort" "http://127.0.0.1:$script:AgentZeroPort"
-    if ($LASTEXITCODE -ne 0) {
-        Write-Log "Agent Zero Tailscale Serve command failed; leaving current serve config unchanged."
+    if ($script:AgentZeroEnabled) {
+        Write-Log "Configuring Tailscale Serve for Agent Zero on HTTPS port $script:AgentZeroTailscaleHttpsPort."
+        & $tailscale serve --bg "--https=$script:AgentZeroTailscaleHttpsPort" "http://127.0.0.1:$script:AgentZeroPort"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Log "Agent Zero Tailscale Serve command failed; leaving current serve config unchanged."
+        }
     }
 }
 
@@ -531,7 +580,12 @@ function Install-ScheduledTask {
     if ($SkipTailscaleServe) {
         $taskArguments += " -SkipTailscaleServe"
     }
-    $taskArguments += " -AgentZero"
+    if ($LowCompute) {
+        $taskArguments += " -LowCompute"
+    }
+    else {
+        $taskArguments += " -AgentZero"
+    }
 
     $timeOfDay = Get-TimeOfDay -Value $UpdateTime
     $triggers = @()
@@ -581,6 +635,7 @@ function Main {
     }
 
     $root = Get-RepoRoot
+    $script:RepoRoot = $root
     Set-Location $root
     $scriptPath = Join-Path $root "scripts\install-or-update.ps1"
 
@@ -591,7 +646,12 @@ function Main {
 
     $selectedAccelerator = Get-AcceleratorProfile
     Write-Log "Selected accelerator profile: $selectedAccelerator."
-    Write-Log "Agent Zero support enabled (local UI port $script:AgentZeroPort, Tailscale HTTPS port $script:AgentZeroTailscaleHttpsPort)."
+    if ($script:AgentZeroEnabled) {
+        Write-Log "Agent Zero support enabled (local UI port $script:AgentZeroPort, Tailscale HTTPS port $script:AgentZeroTailscaleHttpsPort)."
+    }
+    else {
+        Write-Log "Low compute mode: CPU-only, smallest model, Agent Zero disabled."
+    }
     $composeArguments = @(Get-ComposeArgumentsForAccelerator -Root $root -SelectedAccelerator $selectedAccelerator)
 
     Build-And-TestGatewayImage -ComposeArguments $composeArguments
@@ -599,7 +659,9 @@ function Main {
 
     Wait-ForUrl -Url $GatewayHealthUrl -Label "Gateway health"
     Wait-ForUrl -Url $OllamaHealthUrl -Label "Ollama health"
-    Wait-ForUrl -Url "http://127.0.0.1:$script:AgentZeroPort" -Label "Agent Zero UI" -Attempts 90
+    if ($script:AgentZeroEnabled) {
+        Wait-ForUrl -Url "http://127.0.0.1:$script:AgentZeroPort" -Label "Agent Zero UI" -Attempts 90
+    }
 
     Configure-TailscaleServe
     Install-ScheduledTask -Root $root -ScriptPath $scriptPath
@@ -609,9 +671,11 @@ function Main {
 
 try {
     Main
+    Write-UpdateMarker -Status "passed"
 }
 catch {
     Write-Log "ERROR: $($_.Exception.Message)"
+    Write-UpdateMarker -Status "failed" -ErrorMessage $_.Exception.Message
     exit 1
 }
 finally {

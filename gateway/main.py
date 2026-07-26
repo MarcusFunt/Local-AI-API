@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -31,6 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _HEALTH_PATHS = {"/health", "/health/ollama", "/health/qdrant"}
+_PUBLIC_BROWSER_PATHS = {"/live-call"}
 
 
 # ---------------------------------------------------------------------------
@@ -121,13 +124,12 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if scope["type"] == "http" and scope.get("path") in _HEALTH_PATHS:
+        if scope["type"] == "http" and scope.get("path") in (_HEALTH_PATHS | _PUBLIC_BROWSER_PATHS):
             await self.app(scope, receive, send)
             return
 
         headers = Headers(scope=scope)
-        auth_header = headers.get("authorization", "")
-        if not auth_header.startswith("Bearer "):
+        if not _has_valid_api_key(headers):
             if scope["type"] == "websocket":
                 await send({"type": "websocket.close", "code": 1008})
                 return
@@ -144,25 +146,31 @@ class AuthMiddleware:
             await response(scope, receive, send)
             return
 
-        token = auth_header[len("Bearer "):]
-        if not compare_digest(token, settings.api_key):
-            if scope["type"] == "websocket":
-                await send({"type": "websocket.close", "code": 1008})
-                return
-            response = JSONResponse(
-                status_code=401,
-                content={
-                    "error": {
-                        "message": "Invalid API key.",
-                        "type": "authentication_error",
-                        "code": "invalid_api_key",
-                    }
-                },
-            )
-            await response(scope, receive, send)
-            return
-
         await self.app(scope, receive, send)
+
+
+def _has_valid_api_key(headers: Headers) -> bool:
+    """Accept an HTTP bearer token or a browser-safe WebSocket subprotocol token."""
+    auth_header = headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        return compare_digest(auth_header[len("Bearer "):], settings.api_key)
+
+    # Browsers do not allow custom headers during a WebSocket handshake. The live
+    # call page therefore offers the key as a base64url WebSocket subprotocol,
+    # keeping it out of URLs, query strings, and application logs.
+    for protocol in headers.get("sec-websocket-protocol", "").split(","):
+        protocol = protocol.strip()
+        if not protocol.startswith("local-ai-api-key."):
+            continue
+        encoded_token = protocol.removeprefix("local-ai-api-key.")
+        try:
+            padded = encoded_token + "=" * (-len(encoded_token) % 4)
+            token = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError, ValueError):
+            continue
+        if compare_digest(token, settings.api_key):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +181,15 @@ class AuthMiddleware:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ollama_client.init(settings)
+    if settings.warm_audio_on_start:
+        import threading
+
+        from .audio import warm_audio_models
+
+        logger.info("Pre-warming audio models in the background (WARM_AUDIO_ON_START=true).")
+        threading.Thread(
+            target=warm_audio_models, args=(settings,), name="warm-audio", daemon=True
+        ).start()
     logger.info("Gateway started (host=%s port=%s)", settings.host, settings.port)
     yield
     await ollama_client.close()

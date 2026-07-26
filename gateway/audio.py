@@ -348,3 +348,35 @@ async def synthesize_speech_with_chatterbox(
     except Exception as exc:
         logger.warning("Chatterbox synthesis failed: %s", exc)
         raise _model_runtime_exception("Chatterbox text-to-speech", exc) from exc
+
+
+def warm_audio_models(settings: Settings) -> None:
+    """Best-effort pre-load of the configured Whisper and Chatterbox models so the
+    first speech request does not pay the one-time download + load cost. Logs and
+    continues on any failure (missing deps, disabled model, bad config).
+    """
+    from .normalize import resolve_chatterbox_model, resolve_whisper_model
+
+    try:
+        whisper_model = resolve_whisper_model(settings.default_whisper_model, settings)
+    except Exception as exc:  # noqa: BLE001 - warm-up is best-effort
+        logger.warning("Skipping Whisper warm-up: %s", exc)
+        whisper_model = None
+    if whisper_model:
+        try:
+            device = _select_device(settings.whisper_device)
+            cache_dir = settings.whisper_cache_dir.strip() or None
+            logger.info("Warming Whisper model '%s'...", whisper_model)
+            _load_whisper_model(whisper_model, device, download_root=cache_dir)
+            logger.info("Whisper model '%s' is ready.", whisper_model)
+        except Exception as exc:  # noqa: BLE001 - warm-up is best-effort
+            logger.warning("Could not warm Whisper model '%s': %s", whisper_model, exc)
+
+    try:
+        chatterbox_model = resolve_chatterbox_model(settings.chatterbox_model, settings)
+        device = _select_device(settings.chatterbox_device)
+        logger.info("Warming Chatterbox model '%s'...", chatterbox_model)
+        _load_chatterbox_model(chatterbox_model, device)
+        logger.info("Chatterbox model '%s' is ready.", chatterbox_model)
+    except Exception as exc:  # noqa: BLE001 - warm-up is best-effort
+        logger.warning("Could not warm Chatterbox model: %s", exc)

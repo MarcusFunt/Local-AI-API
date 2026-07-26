@@ -8,9 +8,11 @@ import re
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, WebSocket
+from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 from starlette.websockets import WebSocketDisconnect
 
@@ -545,6 +547,12 @@ async def _handle_binary_frame(
         )
 
 
+@router.get("/live-call", response_class=HTMLResponse)
+async def live_call_page() -> HTMLResponse:
+    """Serve the built-in browser client for a private speech conversation."""
+    return HTMLResponse(_LIVE_CALL_HTML)
+
+
 @router.websocket("/v1/audio/conversations")
 async def audio_conversation(websocket: WebSocket) -> None:
     await websocket.accept()
@@ -624,3 +632,12 @@ async def audio_conversation(websocket: WebSocket) -> None:
             with suppress(asyncio.CancelledError):
                 await state.response_task
         logger.info("Conversation session ended: id=%s", state.session_id)
+
+
+def _load_live_call_html() -> str:
+    return (Path(__file__).resolve().parent.parent / "static" / "live-call.html").read_text(
+        encoding="utf-8"
+    )
+
+
+_LIVE_CALL_HTML = _load_live_call_html()

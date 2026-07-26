@@ -85,6 +85,28 @@ class TestNonStreamingChatCompletion:
         assert resp.status_code == 200
         assert resp.json()["choices"][0]["finish_reason"] == "length"
 
+    async def test_out_of_memory_returns_insufficient_memory(self, client: httpx.AsyncClient):
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(
+                return_value=httpx.Response(
+                    500,
+                    json={
+                        "error": "model requires more system memory "
+                        "(5.5 GiB) than is available (3.9 GiB)"
+                    },
+                )
+            )
+            resp = await client.post(
+                "/v1/chat/completions",
+                json={"model": "main", "messages": [{"role": "user", "content": "hi"}]},
+            )
+
+        assert resp.status_code == 507
+        error = resp.json()["error"]
+        assert error["code"] == "insufficient_memory"
+        message = error["message"].lower()
+        assert "smaller model" in message or "low compute" in message
+
     async def test_small_alias_sends_correct_model_to_ollama(self, client: httpx.AsyncClient):
         captured: list[dict] = []
 

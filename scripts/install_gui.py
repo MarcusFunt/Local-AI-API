@@ -86,6 +86,12 @@ class InstallConfig:
     enable_autonomous_workspaces: bool = False
     autonomy_max_storage_gib: int = 20
     agent_zero_cockpit_enabled: bool = False
+    # Low Compute Mode: CPU-only, smallest model, no Agent Zero. Toggle off to
+    # go back to GPU + the full model set.
+    low_compute: bool = False
+
+
+LOW_COMPUTE_MODEL_ALIAS = "dev"
 
 
 def read_model_map(repo_root: Path = REPO_ROOT) -> dict[str, str]:
@@ -377,22 +383,31 @@ def build_env_updates(
     chatterbox_model_map: dict[str, str] | None = None,
 ) -> dict[str, str]:
     ensure_valid_config(config, model_map, whisper_model_map=whisper_model_map, chatterbox_model_map=chatterbox_model_map)
-    model_aliases = list(config.models)
-    for alias in ("agent", "agent-utility"):
-        if alias in model_map and alias not in model_aliases:
-            model_aliases.append(alias)
+    if config.low_compute:
+        # Smallest model only, Agent Zero off.
+        low_alias = LOW_COMPUTE_MODEL_ALIAS if LOW_COMPUTE_MODEL_ALIAS in model_map else config.default_profile
+        model_aliases = [low_alias]
+        default_profile = low_alias
+        agent_zero_enabled = False
+    else:
+        model_aliases = list(config.models)
+        for alias in ("agent", "agent-utility"):
+            if alias in model_map and alias not in model_aliases:
+                model_aliases.append(alias)
+        default_profile = config.default_profile
+        agent_zero_enabled = True
     return {
         "OLLAMA_BASE_URL": "http://127.0.0.1:11434",
         "HOST": "127.0.0.1",
         "PORT": str(config.port),
-        "DEFAULT_MODEL_PROFILE": config.default_profile,
+        "DEFAULT_MODEL_PROFILE": default_profile,
         "DEFAULT_WHISPER_MODEL": config.whisper_model,
         "WHISPER_DEVICE": "auto",
         "CHATTERBOX_MODEL": config.chatterbox_model,
         "CHATTERBOX_DEVICE": "auto",
         "OLLAMA_MODELS": " ".join(selected_model_tags(model_map, model_aliases)),
         "ENABLE_ARBITRARY_MODELS": "false",
-        "AGENT_ZERO_ENABLED": "true",
+        "AGENT_ZERO_ENABLED": "true" if agent_zero_enabled else "false",
         "AGENT_ZERO_PORT": str(config.agent_zero_port),
         "AGENT_ZERO_TAILSCALE_HTTPS_PORT": str(config.agent_zero_tailscale_https_port),
         "REPO_OPS_AUTONOMY_ENABLED": "true" if config.enable_autonomous_workspaces else "false",
@@ -457,8 +472,10 @@ def save_gui_state(repo_root: Path, config: InstallConfig) -> Path:
 
 def build_install_command(repo_root: Path, config: InstallConfig, system: str | None = None) -> list[str]:
     system_name = (system or platform.system()).lower()
+    # Low Compute Mode always builds/runs CPU-only.
+    accelerator = "cpu" if config.low_compute else config.accelerator
     if system_name.startswith("win"):
-        if config.accelerator == "amd":
+        if accelerator == "amd":
             raise ValueError("AMD/ROCm acceleration is only supported by this project on Linux.")
         command = [
             "powershell",
@@ -468,13 +485,16 @@ def build_install_command(repo_root: Path, config: InstallConfig, system: str | 
             "-File",
             str(repo_root / "scripts" / "install-or-update.ps1"),
         ]
-        if config.accelerator != "auto":
-            command.extend(["-Accelerator", config.accelerator])
+        if accelerator != "auto":
+            command.extend(["-Accelerator", accelerator])
         if not config.sync_repo:
             command.append("-SkipRepoSync")
         if not config.configure_tailscale:
             command.append("-SkipTailscaleServe")
-        command.append("-AgentZero")
+        if config.low_compute:
+            command.append("-LowCompute")
+        else:
+            command.append("-AgentZero")
         command.extend(
             [
                 "-UpdateSchedule",
@@ -491,12 +511,14 @@ def build_install_command(repo_root: Path, config: InstallConfig, system: str | 
 
     if system_name == "linux":
         command = ["bash", str(repo_root / "scripts" / "install-or-update.sh")]
-        if config.accelerator != "auto":
-            command.extend(["--accelerator", config.accelerator])
+        if accelerator != "auto":
+            command.extend(["--accelerator", accelerator])
         if not config.sync_repo:
             command.append("--skip-repo-sync")
         if not config.configure_tailscale:
             command.append("--skip-tailscale-serve")
+        if config.low_compute:
+            command.append("--low-compute")
         command.extend(
             [
                 "--update-schedule",
@@ -581,6 +603,7 @@ def run_gui() -> None:
             self.auth_var = tk.BooleanVar(value=initial_config.enable_api_key_auth)
             self.api_key_var = tk.StringVar(value=initial_config.api_key)
             self.whisper_model_var = tk.StringVar(value=initial_config.whisper_model)
+            self.low_compute_var = tk.BooleanVar(value=initial_config.low_compute)
             schedule_label = SCHEDULE_LABELS.get(initial_config.update_schedule, SCHEDULE_LABELS["default"])
             self.schedule_var = tk.StringVar(value=schedule_label)
             self.update_time_var = tk.StringVar(value=initial_config.update_time)
@@ -690,6 +713,16 @@ def run_gui() -> None:
             ttk.Button(gateway_frame, text="Generate key", command=self._generate_api_key).grid(
                 row=7, column=2, sticky="w", padx=(8, 0), pady=2
             )
+            ttk.Checkbutton(
+                gateway_frame,
+                text="Low compute mode (CPU-only, smallest model, no Agent Zero)",
+                variable=self.low_compute_var,
+            ).grid(row=8, column=0, columnspan=3, sticky="w", pady=(10, 0))
+            ttk.Label(
+                gateway_frame,
+                text="Overrides accelerator and models: runs qwen3.5:0.8b on CPU with a slimmer image. Uncheck to use your GPU and the full model set.",
+                wraplength=760,
+            ).grid(row=9, column=0, columnspan=3, sticky="w", pady=(0, 2))
 
             schedule_frame = ttk.LabelFrame(self, text="Repository auto-updates", padding=10)
             schedule_frame.grid(row=4, column=0, sticky="ew", pady=(0, 10))
@@ -773,11 +806,24 @@ def run_gui() -> None:
                 autonomy_storage = int(self.autonomy_storage_var.get())
             except ValueError as exc:
                 raise ValueError("Every-hours interval must be a number.") from exc
+            low_compute = self.low_compute_var.get()
+            if low_compute and LOW_COMPUTE_MODEL_ALIAS in model_map:
+                # Low compute overrides model/accelerator/agent-zero choices so
+                # the collected config is self-consistent and validates.
+                models = [LOW_COMPUTE_MODEL_ALIAS]
+                default_profile = LOW_COMPUTE_MODEL_ALIAS
+                accelerator = "cpu"
+                agent_zero_enabled = False
+            else:
+                models = [alias for alias, var in self.model_vars.items() if var.get()]
+                default_profile = self.default_profile_var.get()
+                accelerator = self.accelerator_var.get()
+                agent_zero_enabled = True
             return InstallConfig(
-                models=[alias for alias, var in self.model_vars.items() if var.get()],
-                default_profile=self.default_profile_var.get(),
+                models=models,
+                default_profile=default_profile,
                 port=8080,
-                accelerator=self.accelerator_var.get(),
+                accelerator=accelerator,
                 configure_tailscale=self.configure_tailscale_var.get(),
                 sync_repo=self.sync_repo_var.get(),
                 update_schedule=SCHEDULE_KEYS_BY_LABEL.get(self.schedule_var.get(), "default"),
@@ -788,12 +834,13 @@ def run_gui() -> None:
                 chatterbox_model=initial_config.chatterbox_model,
                 enable_api_key_auth=self.auth_var.get(),
                 api_key=self.api_key_var.get().strip(),
-                agent_zero_enabled=True,
+                agent_zero_enabled=agent_zero_enabled,
                 agent_zero_port=50080,
                 agent_zero_tailscale_https_port=8443,
                 enable_autonomous_workspaces=self.autonomy_var.get(),
                 autonomy_max_storage_gib=autonomy_storage,
                 agent_zero_cockpit_enabled=self.cockpit_var.get(),
+                low_compute=low_compute,
             )
 
         def _save_settings(self) -> None:

@@ -87,6 +87,18 @@ def test_compose_does_not_publish_raw_ollama_port(files: list[str]):
 
 
 @pytest.mark.parametrize("files", COMPOSE_VARIANTS.values())
+def test_autoheal_watchdog_monitors_gateway(files: list[str]):
+    """The autoheal sidecar must exist and the gateway must be labeled for it,
+    so a gateway that goes unhealthy (not just one that exits) is restarted."""
+    config = _compose_config(files)
+    services = config["services"]
+
+    assert "autoheal" in services, "autoheal watchdog service is missing"
+    assert services["autoheal"]["image"].startswith("willfarrell/autoheal")
+    assert services["gateway"].get("labels", {}).get("autoheal") == "true"
+
+
+@pytest.mark.parametrize("files", COMPOSE_VARIANTS.values())
 def test_gateway_keeps_ollama_loopback_and_shared_namespace(files: list[str]):
     config = _compose_config(files)
 
@@ -105,7 +117,7 @@ def test_gateway_keeps_ollama_loopback_and_shared_namespace(files: list[str]):
         'models="qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b"'
         in model_init["entrypoint"][2]
     )
-    assert "for model in $$models qwen3:14b qwen3:8b" in model_init["entrypoint"][2]
+    assert "for model in $$models; do" in model_init["entrypoint"][2]
     assert 'case " $$pulled " in' in model_init["entrypoint"][2]
     assert 'ollama pull "$$model"' in model_init["entrypoint"][2]
     assert ollama["environment"]["OLLAMA_HOST"] == "127.0.0.1:11434"
@@ -155,7 +167,8 @@ def test_agent_zero_models_are_pulled_with_custom_ollama_models():
     entrypoint = config["services"]["model-init"]["entrypoint"][2]
 
     assert 'models="qwen3.5:0.8b"' in entrypoint
-    assert "for model in $$models qwen3:14b qwen3:8b" in entrypoint
+    assert "for model in $$models; do" in entrypoint
+    assert 'ollama pull "$$model"' in entrypoint
 
 
 @pytest.mark.parametrize("files", COMPOSE_VARIANTS.values())
@@ -246,6 +259,9 @@ def test_agent_zero_compose_forwards_gateway_api_key_when_set():
 
 @pytest.mark.parametrize("script", SHELL_SCRIPTS)
 def test_shell_script_has_valid_bash_syntax(script: str):
+    if not (REPO_ROOT / script).is_file():
+        pytest.skip(f"{script} is not present in this checkout")
+
     bash = shutil.which("bash")
     if bash is None:
         pytest.skip("bash is not installed")
@@ -261,6 +277,9 @@ def test_shell_script_has_valid_bash_syntax(script: str):
 
 @pytest.mark.parametrize("script", POWERSHELL_SCRIPTS)
 def test_powershell_script_has_valid_syntax(script: str):
+    if not (REPO_ROOT / script).is_file():
+        pytest.skip(f"{script} is not present in this checkout")
+
     powershell = shutil.which("pwsh") or shutil.which("powershell")
     if powershell is None:
         pytest.skip("PowerShell is not installed")
@@ -282,3 +301,16 @@ def test_powershell_script_has_valid_syntax(script: str):
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_audio_requirements_pin_setuptools_below_81():
+    """Chatterbox's watermarker dependency (resemble-perth) imports the legacy
+    pkg_resources module, which setuptools removed in 81.0. Without a <81 pin the
+    audio image builds with a newer setuptools, perth's import silently fails, and
+    Chatterbox TTS crashes at model load with "'NoneType' object is not callable".
+    """
+    reqs = (REPO_ROOT / "requirements-audio.txt").read_text(encoding="utf-8")
+    assert "setuptools<81" in reqs, (
+        "requirements-audio.txt must pin setuptools<81 so pkg_resources stays "
+        "importable for resemble-perth / Chatterbox TTS."
+    )

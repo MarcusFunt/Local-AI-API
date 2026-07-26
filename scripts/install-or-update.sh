@@ -13,6 +13,9 @@ ACCELERATOR="${LOCAL_AI_API_ACCELERATOR:-auto}"
 SKIP_REPO_SYNC="${LOCAL_AI_API_SKIP_REPO_SYNC:-0}"
 SKIP_TAILSCALE_SERVE="${LOCAL_AI_API_SKIP_TAILSCALE_SERVE:-0}"
 NO_SCHEDULED_TASK="${LOCAL_AI_API_NO_SCHEDULED_TASK:-0}"
+LOW_COMPUTE="${LOCAL_AI_API_LOW_COMPUTE:-0}"
+AGENT_ZERO_ENABLED=1
+REPO_ROOT_DIR=""
 UPDATE_SCHEDULE="${LOCAL_AI_API_UPDATE_SCHEDULE:-default}"
 UPDATE_TIME="${LOCAL_AI_API_UPDATE_TIME:-03:00}"
 UPDATE_WEEKLY_DAY="${LOCAL_AI_API_UPDATE_WEEKLY_DAY:-Sunday}"
@@ -31,6 +34,37 @@ have() {
   command -v "$1" >/dev/null 2>&1
 }
 
+write_update_marker() {
+  local status="$1"
+  local error="${2:-}"
+  [[ -n "${REPO_ROOT_DIR}" ]] || return 0
+  local dir="${REPO_ROOT_DIR}/.local"
+  mkdir -p "${dir}" 2>/dev/null || return 0
+  local scheduled="false"
+  if [[ "${LOCAL_AI_API_SYSTEMD:-}" == "1" ]]; then
+    scheduled="true"
+  fi
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ -n "${error}" ]]; then
+    printf '{"status":"%s","scheduled":%s,"finished_at":"%s","error":"%s"}\n' \
+      "${status}" "${scheduled}" "${ts}" "${error}" > "${dir}/last-update.json"
+  else
+    printf '{"status":"%s","scheduled":%s,"finished_at":"%s"}\n' \
+      "${status}" "${scheduled}" "${ts}" > "${dir}/last-update.json"
+  fi
+}
+
+on_exit() {
+  local rc=$?
+  if [[ "${rc}" == "0" ]]; then
+    write_update_marker "passed"
+  else
+    write_update_marker "failed" "install/update failed (exit ${rc}); see: journalctl -u local-ai-api-update.service"
+  fi
+}
+trap on_exit EXIT
+
 parse_args() {
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -45,6 +79,10 @@ parse_args() {
         ;;
       --skip-tailscale-serve)
         SKIP_TAILSCALE_SERVE=1
+        shift
+        ;;
+      --low-compute)
+        LOW_COMPUTE=1
         shift
         ;;
       --no-scheduled-task)
@@ -319,7 +357,9 @@ compose_files_for_accelerator() {
       die "Unknown accelerator: ${accelerator}"
       ;;
   esac
-  printf '%s\n' -f "${root}/compose.agent-zero.yaml"
+  if [[ "${AGENT_ZERO_ENABLED}" == "1" ]]; then
+    printf '%s\n' -f "${root}/compose.agent-zero.yaml"
+  fi
 }
 
 build_and_test_gateway_image() {
@@ -354,8 +394,10 @@ start_stack() {
   log "Starting gateway."
   compose_cmd "${compose_args[@]}" up -d gateway
 
-  log "Starting Agent Zero."
-  compose_cmd "${compose_args[@]}" up -d agent-zero
+  if [[ "${AGENT_ZERO_ENABLED}" == "1" ]]; then
+    log "Starting Agent Zero."
+    compose_cmd "${compose_args[@]}" up -d agent-zero
+  fi
 }
 
 wait_for_url() {
@@ -424,13 +466,15 @@ configure_tailscale_serve() {
     sudo_cmd tailscale serve --bg http://127.0.0.1:8080
   fi
 
-  log "Configuring Tailscale Serve for Agent Zero on HTTPS port ${AGENT_ZERO_TAILSCALE_HTTPS_PORT}."
-  if ! tailscale serve --bg "--https=${AGENT_ZERO_TAILSCALE_HTTPS_PORT}" "http://127.0.0.1:${AGENT_ZERO_PORT}"; then
-    if [[ "${LOCAL_AI_API_SYSTEMD:-}" == "1" ]]; then
-      log "Agent Zero Tailscale Serve command failed during scheduled run; leaving current serve config unchanged."
-      return
+  if [[ "${AGENT_ZERO_ENABLED}" == "1" ]]; then
+    log "Configuring Tailscale Serve for Agent Zero on HTTPS port ${AGENT_ZERO_TAILSCALE_HTTPS_PORT}."
+    if ! tailscale serve --bg "--https=${AGENT_ZERO_TAILSCALE_HTTPS_PORT}" "http://127.0.0.1:${AGENT_ZERO_PORT}"; then
+      if [[ "${LOCAL_AI_API_SYSTEMD:-}" == "1" ]]; then
+        log "Agent Zero Tailscale Serve command failed during scheduled run; leaving current serve config unchanged."
+        return
+      fi
+      sudo_cmd tailscale serve --bg "--https=${AGENT_ZERO_TAILSCALE_HTTPS_PORT}" "http://127.0.0.1:${AGENT_ZERO_PORT}"
     fi
-    sudo_cmd tailscale serve --bg "--https=${AGENT_ZERO_TAILSCALE_HTTPS_PORT}" "http://127.0.0.1:${AGENT_ZERO_PORT}"
   fi
 }
 
@@ -537,6 +581,7 @@ Environment=LOCAL_AI_API_SYSTEMD=1
 Environment=LOCAL_AI_API_ACCELERATOR=${ACCELERATOR}
 Environment=LOCAL_AI_API_SKIP_REPO_SYNC=${SKIP_REPO_SYNC}
 Environment=LOCAL_AI_API_SKIP_TAILSCALE_SERVE=${SKIP_TAILSCALE_SERVE}
+Environment=LOCAL_AI_API_LOW_COMPUTE=${LOW_COMPUTE}
 ExecStart=${root}/scripts/install-or-update.sh --scheduled-run --no-scheduled-task
 EOF
 
@@ -563,10 +608,16 @@ main() {
   local -a compose_args
 
   parse_args "$@"
+  if [[ "${LOW_COMPUTE}" == "1" ]]; then
+    # Low Compute Mode: CPU-only, and Agent Zero (needs the large models) off.
+    ACCELERATOR="cpu"
+    AGENT_ZERO_ENABLED=0
+  fi
   require_linux
   acquire_lock
 
   root="$(repo_root)"
+  REPO_ROOT_DIR="${root}"
   cd "${root}"
   script_path="${root}/scripts/install-or-update.sh"
 
@@ -583,7 +634,9 @@ main() {
 
   wait_for_url "${GATEWAY_HEALTH_URL}" "Gateway health"
   wait_for_url "${OLLAMA_HEALTH_URL}" "Ollama health"
-  wait_for_url "http://127.0.0.1:${AGENT_ZERO_PORT}" "Agent Zero UI" 90
+  if [[ "${AGENT_ZERO_ENABLED}" == "1" ]]; then
+    wait_for_url "http://127.0.0.1:${AGENT_ZERO_PORT}" "Agent Zero UI" 90
+  fi
 
   configure_tailscale_serve
   install_systemd_units "${root}"

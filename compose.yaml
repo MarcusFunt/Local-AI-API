@@ -10,6 +10,7 @@ x-gateway-environment: &gateway-environment
   WHISPER_CACHE_DIR: ${WHISPER_CACHE_DIR:-/models/cache/whisper}
   CHATTERBOX_MODEL: ${CHATTERBOX_MODEL:-chatterbox}
   CHATTERBOX_DEVICE: ${CHATTERBOX_DEVICE:-auto}
+  WARM_AUDIO_ON_START: ${WARM_AUDIO_ON_START:-false}
   XDG_CACHE_HOME: /models/cache
   HF_HOME: /models/cache/huggingface
   TORCH_HOME: /models/cache/torch
@@ -55,7 +56,7 @@ services:
         set -eu
         models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b}"
         pulled=""
-        for model in $$models qwen3:14b qwen3:8b; do
+        for model in $$models; do
           case " $$pulled " in
             *" $$model "*) continue ;;
           esac
@@ -103,6 +104,23 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+    labels:
+      # Restarted by the autoheal watchdog below if it becomes unhealthy.
+      autoheal: "true"
+
+  # Watchdog. Docker's restart policy only reacts to a full crash/exit, so a
+  # gateway that hangs (process alive but HTTP dead) would otherwise stay up and
+  # broken. This sidecar watches containers labeled autoheal=true and restarts
+  # them when Docker's own healthcheck marks them unhealthy.
+  autoheal:
+    image: willfarrell/autoheal:latest
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: "15"
+      AUTOHEAL_START_PERIOD: "90"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
   repo-updater:
     # Poll GitHub from inside Docker and recreate the gateway only after a

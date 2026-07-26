@@ -1,5 +1,12 @@
 -r requirements.txt
 
+# Chatterbox's watermarker dependency (resemble-perth) imports the legacy
+# pkg_resources module, which setuptools removed in 81.0. On Python 3.12 slim
+# images the default setuptools is newer, so perth's import silently fails and
+# Chatterbox TTS crashes with "'NoneType' object is not callable". Pin
+# setuptools below 81 so pkg_resources stays available.
+setuptools<81
+
 # Local speech models. These packages pull PyTorch and model-runtime
 # dependencies, so they are kept separate from the lightweight gateway runtime.
 openai-whisper==20250625

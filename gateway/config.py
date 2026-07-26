@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     whisper_cache_dir: str = ""
     chatterbox_model: str = "chatterbox"
     chatterbox_device: str = "auto"
+    warm_audio_on_start: bool = False
 
     @field_validator("ollama_base_url")
     @classmethod

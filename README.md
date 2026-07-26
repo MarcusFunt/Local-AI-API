@@ -48,6 +48,7 @@ Tailscale Serve acts as the TLS terminator and access-control layer. The gateway
 - [Tailscale](https://tailscale.com/download) installed for private remote access
 - Python 3.11 or later only if you run the gateway outside Docker
 - [Ollama](https://ollama.com/download), FFmpeg, and audio runtime libraries only if you run outside Docker
+- **Disk:** the default full stack uses ~50–60 GB (Low Compute Mode ~15–20 GB). See [`docs/disk-and-cleanup.md`](docs/disk-and-cleanup.md) for sizing and how to reclaim space — including the Windows/WSL2 disk that grows but never shrinks on its own.
 
 ---
 
@@ -202,6 +203,12 @@ The Windows script:
 - configures Agent Zero for Tailscale Serve on HTTPS port `8443`
 - installs a per-user Scheduled Task using the selected update schedule, defaulting to logon and daily using the same script
 
+The Windows update task runs as the current user, so its scheduled triggers fire
+while that user is logged on (Docker Desktop itself requires an interactive
+session anyway). On a server you want to update while logged off, prefer the
+Linux systemd path, which runs the updater as a system service independent of any
+login.
+
 AMD/ROCm Docker acceleration is Linux-only in this project; Windows hosts use CPU unless NVIDIA Docker GPU access is available.
 
 Useful installer options:
@@ -255,13 +262,34 @@ skill/plugin quarantine workflow.
 
 ---
 
+## One-click launchers (Windows)
+
+If you would rather not touch a terminal, two double-clickable scripts sit at the
+repository root:
+
+| File | What it does |
+|---|---|
+| `Install.cmd` | Opens the graphical configurator (choose models, default profile, auth, Tailscale, accelerator, and the auto-update schedule), then runs the Docker install/update. Run this first, and again whenever you want to change configuration. |
+| `Start.cmd` | Starts the already-installed stack (Ollama + gateway + Agent Zero) and opens the status page. It does not rebuild, re-test, or sync the repository, so it is the fast way to bring everything back up after a reboot. |
+
+`Install.cmd` needs Python 3.11+ on `PATH` (it launches the Tkinter GUI); it
+prints download instructions if Python is missing. `Start.cmd` only needs Docker
+Desktop and starts it automatically if it is installed but not running.
+
+On Linux/macOS the equivalents are `python3 scripts/install_gui.py` for
+configuration and `bash scripts/start-stack.sh` for a fast start.
+
+---
+
 ## Graphical installer
 
-Run the Tkinter GUI when you want to choose models, the default profile, optional bearer-token auth, mandatory Agent Zero support, Tailscale setup, accelerator profile, and repository auto-update cadence:
+Run the Tkinter GUI directly when you want to choose models, the default profile, optional bearer-token auth, mandatory Agent Zero support, Tailscale setup, accelerator profile, and repository auto-update cadence:
 
 ```powershell
 python .\scripts\install_gui.py
 ```
+
+On Windows you can also just double-click `Install.cmd`, which launches this same GUI.
 
 On Linux, use `python3 scripts/install_gui.py` and install your distribution's Tkinter package if needed. The GUI writes `.env`, stores its own UI state in `.local/install-gui.json`, and then runs the same Docker installer scripts described above.
 
@@ -269,11 +297,46 @@ The model selector writes `OLLAMA_MODELS` using the approved model tags only. Th
 
 ---
 
+## Low compute mode
+
+For a machine without a usable GPU (or when you just want a small footprint), enable **Low compute mode** — a single toggle that runs the whole stack lean:
+
+- **CPU only** — builds the gateway image with the CPU-only PyTorch wheel, which drops ~2.7 GB of unused CUDA libraries (the audio image goes from ~11.5 GB to ~4.8 GB).
+- **Smallest model only** — pulls just `qwen3.5:0.8b` (the `dev` profile) instead of the full set.
+- **Agent Zero off** — Agent Zero needs the large `qwen3:14b`/`qwen3:8b` models, so it is skipped in this mode.
+
+Speech-to-text (Whisper) and text-to-speech (Chatterbox) still work; they just run on CPU.
+
+Enable it in the graphical installer with the **"Low compute mode"** checkbox, or pass the flag directly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-or-update.ps1 -LowCompute
+```
+
+```bash
+./scripts/install-or-update.sh --low-compute
+```
+
+To go back to your GPU and the full model set, re-run the installer **without** the flag (or uncheck the box in the GUI).
+
+---
+
 ## Installation
+
+Run the gateway outside Docker inside a virtual environment so its pinned
+dependencies do not collide with other Python packages on your machine (the
+gateway pins exact `fastapi`/`starlette`/`pydantic` versions, and a newer
+globally-installed Starlette will break the import):
 
 ```bash
 git clone https://github.com/MarcusFunt/Local-AI-API.git
 cd Local-AI-API
+
+python -m venv .venv
+# Linux/macOS:
+source .venv/bin/activate
+# Windows PowerShell:
+#   .\.venv\Scripts\Activate.ps1
 
 pip install -r requirements.txt
 
@@ -341,6 +404,8 @@ The gateway container serves a small status GUI from the same FastAPI process:
 | `/health/qdrant` | Reports Qdrant status; returns `disabled` when RAG is off |
 
 The status page shows gateway runtime health, Ollama connectivity, whether `main`, `small`, `dev`, `agent`, and `agent-utility` are pulled, the latest explicit dev-model inference check, and a Git update button when the gateway is running from a Git checkout. The check uses a fixed tiny prompt and does not log prompt content. The update button only performs a fast-forward pull; it refuses to overwrite local changes and reports when a restart or rebuild is recommended.
+
+`/status.json` also includes a `last_update_run` field: the installers write a `.local/last-update.json` marker after every scheduled or manual run (`passed`/`failed`, timestamp, and whether it was scheduled), so a nightly auto-update that failed silently — for example because a test flaked during the in-image gate — is visible here instead of only in the systemd journal or Task Scheduler history.
 
 If optional API-key auth is enabled, the status GUI is protected like other non-health routes. Health endpoints remain available without auth.
 
@@ -417,6 +482,15 @@ Realtime speech-to-speech conversation WebSocket:
 ```text
 ws://localhost:8080/v1/audio/conversations
 ```
+
+For a ready-to-use browser client, open `/live-call` on the gateway (for
+example, `https://your-tailnet-host.ts.net/live-call` through Tailscale Serve).
+It keeps one private WebSocket session open and provides push-to-talk turns,
+live transcript/text updates, and WAV playback. Microphone capture requires
+HTTPS or localhost. The page itself contains no gateway data and remains
+available when optional API-key auth is enabled; enter the API key in the page
+to authenticate the WebSocket connection. The key is sent in a WebSocket
+subprotocol rather than a URL and is retained only in the open browser tab.
 
 The first WebSocket message must be a JSON session frame:
 
@@ -615,6 +689,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `WHISPER_CACHE_DIR` | `/models/cache/whisper` in Docker | Whisper model cache directory. |
 | `CHATTERBOX_MODEL` | `chatterbox` | Chatterbox model used when speech requests omit `model`; allowed values are `chatterbox` and `chatterbox-multilingual`. |
 | `CHATTERBOX_DEVICE` | `auto` | Device for Chatterbox model loading (`auto`, `cpu`, `cuda`, or `mps`). |
+| `WARM_AUDIO_ON_START` | `false` | If `true`, load the Whisper and Chatterbox models in the background at startup so the first speech request is fast instead of paying a one-time download + load. |
 | `ENABLE_ARBITRARY_MODELS` | `false` | If `true`, any model name is forwarded to Ollama. |
 | `AGENT_ZERO_ENABLED` | `true` | Legacy compatibility flag. Agent Zero is mandatory; installers and status treat `agent` and `agent-utility` as required models. |
 | `AGENT_ZERO_PORT` | `50080` | Host loopback port for the Agent Zero UI. |
@@ -713,6 +788,11 @@ Supported server events include `transcript.completed`, `response.text.delta`,
 `response.text.completed`, `response.audio.started`, a binary WAV frame,
 `response.audio.completed`, `response.completed`, and `error`.
 
+The bundled `/live-call` client is intentionally push-to-talk. Each released
+turn is transcribed, answered, and synthesized before the next turn begins;
+this avoids sending microphone audio while the user is not speaking and matches
+the WebSocket API's committed-turn design.
+
 ---
 
 ## Enabling optional API-key auth
@@ -729,7 +809,7 @@ To enable it:
 
 2. Restart the gateway.
 
-3. All clients must now include the header:
+3. API clients must now include the header:
    ```
    Authorization: Bearer your-strong-random-key-here
    ```
@@ -779,6 +859,7 @@ All errors use an OpenAI-compatible envelope so clients that parse OpenAI errors
 | Missing or wrong API key | 401 |
 | Request body too large | 413 |
 | Ollama returned an error | 502 |
+| Model needs more memory than is available | 507 |
 | Ollama unreachable | 502 |
 | Ollama timed out | 504 |
 | Ollama returned malformed JSON | 502 |
