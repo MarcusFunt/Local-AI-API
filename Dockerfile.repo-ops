@@ -20,7 +20,7 @@ RUN python -m pip install --upgrade pip && \
     python -m pip install -r requirements-repo-ops.txt && \
     /opt/verification-venv/bin/python -m pip install --upgrade pip && \
     /opt/verification-venv/bin/python -m pip install -r requirements.txt && \
-    npm install --global gitnexus@1.6.7 && \
+    npm install --global gitnexus@1.6.7 axe-core@4.10.2 && \
     python -m playwright install --with-deps chromium
 
 COPY repo_ops ./repo_ops

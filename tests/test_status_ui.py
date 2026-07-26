@@ -47,6 +47,7 @@ class TestStatusPage:
         assert "/status.json" in resp.text
         assert "/status/update" in resp.text
         assert "X-Local-AI-Admin-Action" in resp.text
+        assert "Autonomous workspaces" in resp.text
 
     async def test_status_path_renders_same_gui(self, client: httpx.AsyncClient):
         resp = await client.get("/status")
@@ -88,6 +89,8 @@ class TestStatusJson:
         assert all(model["status"] == "ready" for model in body["models"])
         assert "repository" in body
         assert "available" in body["repository"]
+        assert body["autonomy"]["max_runtime_hours"] == 24
+        assert body["autonomy"]["max_storage_gib"] == 20
 
     async def test_reports_missing_dev_model_as_degraded(self, client: httpx.AsyncClient):
         with respx.mock(base_url=OLLAMA_BASE) as mock:

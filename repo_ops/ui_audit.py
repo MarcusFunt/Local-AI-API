@@ -7,6 +7,9 @@ import json
 from pathlib import Path
 
 
+_AXE_PATHS = (Path("/usr/local/lib/node_modules/axe-core/axe.min.js"), Path("/usr/lib/node_modules/axe-core/axe.min.js"))
+
+
 async def _audit(url: str, screenshot: Path | None = None) -> dict[str, object]:
     try:
         from playwright.async_api import async_playwright
@@ -19,6 +22,16 @@ async def _audit(url: str, screenshot: Path | None = None) -> dict[str, object]:
         page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
         response = await page.goto(url, wait_until="networkidle", timeout=30_000)
         title = await page.title()
+        axe_path = next((path for path in _AXE_PATHS if path.is_file()), None)
+        if axe_path is None:
+            raise RuntimeError("axe-core is not installed in the preview image.")
+        await page.add_script_tag(path=str(axe_path))
+        axe = await page.evaluate(
+            """async () => {
+              const result = await axe.run(document, {runOnly: {type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']}});
+              return result.violations.map(item => ({id: item.id, impact: item.impact, nodes: item.nodes.length}));
+            }"""
+        )
         accessibility = await page.evaluate(
             """() => ({
               missing_alt_images: [...document.images].filter(image => !image.alt.trim()).length,
@@ -39,6 +52,7 @@ async def _audit(url: str, screenshot: Path | None = None) -> dict[str, object]:
         "title": title,
         "console_errors": console_errors,
         "accessibility": accessibility,
+        "axe_violations": axe,
     }
 
 
@@ -57,6 +71,7 @@ def main() -> None:
         or accessibility["missing_alt_images"]
         or accessibility["unnamed_buttons"]
         or accessibility["empty_links"]
+        or result["axe_violations"]
     ):
         raise SystemExit(1)
 

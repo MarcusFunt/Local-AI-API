@@ -83,6 +83,22 @@ def test_env_updates_always_adds_agent_zero_required_models(installer):
     assert updates["OLLAMA_MODELS"] == "qwen3.5:0.8b qwen3:14b qwen3:8b"
 
 
+def test_env_updates_can_enable_bounded_autonomous_workspaces(installer):
+    config = installer.InstallConfig(
+        models=["dev"],
+        default_profile="dev",
+        enable_autonomous_workspaces=True,
+        autonomy_max_storage_gib=10,
+        agent_zero_cockpit_enabled=True,
+    )
+
+    updates = installer.build_env_updates(config, MODEL_MAP)
+
+    assert updates["REPO_OPS_AUTONOMY_ENABLED"] == "true"
+    assert updates["REPO_OPS_AUTONOMY_MAX_STORAGE_GIB"] == "10"
+    assert updates["AGENT_ZERO_COCKPIT_ENABLED"] == "true"
+
+
 def test_gui_rejects_unknown_whisper_model(installer):
     config = installer.InstallConfig(
         models=["dev"],

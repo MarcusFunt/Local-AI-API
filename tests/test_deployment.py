@@ -145,7 +145,8 @@ def test_docker_repo_updater_uses_only_clean_fast_forward_updates():
     assert "export GIT_TERMINAL_PROMPT=0" in script
     assert 'git -C "${REPO_DIR}" diff --quiet' in script
     assert 'git -C "${REPO_DIR}" diff --cached --quiet' in script
-    assert 'docker compose "$@" build gateway' in script
+    assert 'docker compose "$@" build --pull gateway' in script
+    assert 'docker compose "$@" build --pull agent-zero' in script
     assert 'docker compose "$@" up -d --no-deps --force-recreate gateway' in script
 
 
@@ -205,7 +206,8 @@ def test_agent_zero_compose_publishes_ui_only_on_loopback():
     config = _compose_config(AGENT_ZERO_COMPOSE_FILES)
 
     agent_zero = config["services"]["agent-zero"]
-    assert agent_zero["image"] == "agent0ai/agent-zero:latest"
+    assert agent_zero["image"] == "local-ai-api-agent-zero-cockpit:latest"
+    assert agent_zero["build"]["dockerfile"] == "Dockerfile.agent-zero-cockpit"
     assert agent_zero["environment"]["API_KEY_OTHER"] == "unused"
     assert agent_zero["command"][:2] == ["/bin/sh", "-c"]
     assert "API_KEY_OTHER" in agent_zero["command"][2]

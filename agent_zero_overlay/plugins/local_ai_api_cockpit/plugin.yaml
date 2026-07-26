@@ -1,0 +1,7 @@
+name: local_ai_api_cockpit
+title: Local AI API Workspace Cockpit
+description: Local-only controls and evidence for disposable repo-ops workspaces.
+version: 1.0.0
+settings_sections: []
+per_project_config: false
+per_agent_config: false

@@ -117,27 +117,61 @@ def test_improvement_inventory_and_experiment_ledger(manager: RepoOpsManager):
     assert report["experiments"] == [entry]
 
 
-def test_capture_ui_uses_only_configured_url_and_artifact_path(manager: RepoOpsManager, monkeypatch: pytest.MonkeyPatch):
+def test_capture_ui_queues_unnetworked_workspace_preview(manager: RepoOpsManager):
     manager.create_workspace("ui-evidence")
-    manager = RepoOpsManager(
-        RepoOpsConfig(
-            manager.config.source_root,
-            manager.config.workspaces_root,
-            ui_base_url="http://status.test/status",
-        )
-    )
-    captured: list[list[str]] = []
-
-    def fake_command(args: list[str], cwd: Path | None = None, timeout: int = 120):
-        captured.append(args)
-        return subprocess.CompletedProcess(args, 0, stdout='{"status": 200, "accessibility": {}}', stderr="")
-
-    monkeypatch.setattr(manager, "_command", fake_command)
     payload = manager.capture_ui("ui-evidence")
 
-    assert captured[0][:5] == [sys.executable, "-m", "repo_ops.ui_audit", "--url", "http://status.test/status"]
-    assert "--screenshot" in captured[0]
-    assert Path(payload["screenshot_path"]).parts[-3:] == (".artifacts", "ui-evidence", "status.png")
+    assert payload["status"] == "queued"
+    assert manager.preview_status("ui-evidence") == {"status": "queued"}
+    assert (manager.config.workspaces_root / ".preview-jobs" / "ui-evidence.json").is_file()
+
+
+def test_autonomous_run_is_bounded_and_archives_only_passing_changed_work(manager: RepoOpsManager, monkeypatch: pytest.MonkeyPatch):
+    manager.create_workspace("autonomous")
+    before = manager.read_file("README.md", task_id="autonomous")
+    manager.write_file("autonomous", "README.md", "Autonomous improvement\n", before["sha256"])
+    started = manager.start_autonomous_run("autonomous")
+    assert started["state"] == "running"
+    assert started["policy"]["max_runtime_seconds"] == 86_400
+
+    def passing_check(task_id: str, preset: str) -> dict[str, object]:
+        result: dict[str, object] = {"preset": preset, "passed": True, "recorded_at": manager._timestamp()}
+        manager._record_check(task_id, result)
+        return result
+
+    monkeypatch.setattr(manager, "run_check", passing_check)
+    completed = manager.evaluate_workspace("autonomous")
+
+    assert completed["state"] == "review_ready"
+    assert completed["evaluations"][-1]["score"] == 1.0
+    assert manager.workspace_status("autonomous")["state"] == "review_ready"
+
+
+def test_autonomous_run_pauses_at_hard_storage_budget(manager: RepoOpsManager):
+    manager.create_workspace("budgeted")
+    manager.start_autonomous_run("budgeted", policy={"max_storage_bytes": 1})
+
+    status = manager.autonomous_status("budgeted")
+
+    assert status["state"] == "paused"
+    assert status["stop_reason"] == "storage_budget_exceeded"
+
+
+def test_autonomous_run_stops_after_three_non_improving_evaluations(manager: RepoOpsManager, monkeypatch: pytest.MonkeyPatch):
+    manager.create_workspace("plateau")
+    manager.start_autonomous_run("plateau")
+
+    def failing_check(task_id: str, preset: str) -> dict[str, object]:
+        return {"preset": preset, "passed": False, "recorded_at": manager._timestamp()}
+
+    monkeypatch.setattr(manager, "run_check", failing_check)
+    manager.evaluate_workspace("plateau")
+    manager.evaluate_workspace("plateau")
+    manager.evaluate_workspace("plateau")
+    status = manager.evaluate_workspace("plateau")
+
+    assert status["state"] == "stopped"
+    assert status["stop_reason"] == "non_improving_evaluation_limit"
 
 
 def test_quarantine_evidence_requires_manual_promotion(tmp_path: Path):

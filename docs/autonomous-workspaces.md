@@ -1,0 +1,23 @@
+# Autonomous local workspaces
+
+Enable `REPO_OPS_AUTONOMY_ENABLED=true` only with the `compose.repo-ops.yaml`
+overlay. Agent Zero may use the new repo-ops MCP run, progress, evaluation,
+preview, pause, resume, and report tools, but they retain the existing
+repository boundary: no source writes, arbitrary commands, pushes, merges,
+deployments, Docker control, or credentials.
+
+Each run has fixed hard limits: 24 hours, 20 GiB of workspace plus evidence,
+and three non-improving evaluation results. The tracked evaluation manifest
+selects only named verification presets. A changed workspace with passing
+evaluation evidence can become review-ready; a human still reviews and merges.
+
+`repo-ops-preview` is a separate worker with `network_mode: none`, no host
+port, source checkout, archives, Agent Zero state, or Docker socket. It reads a
+file-queued task, runs the status page on loopback, captures browser/axe WCAG
+A–AA evidence, and terminates the server before reporting the result.
+
+The Agent Zero cockpit is a small plugin overlay. Browser code calls only the
+same-origin authenticated Agent Zero plugin API; its allow-listed backend proxy
+is the only component that reaches internal `repo-ops`. Rebuild it against
+upstream with `scripts/update-agent-zero-cockpit.sh`; a failed candidate does
+not replace the active image.

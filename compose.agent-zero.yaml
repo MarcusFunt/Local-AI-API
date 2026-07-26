@@ -1,6 +1,11 @@
 services:
   agent-zero:
-    image: agent0ai/agent-zero:${AGENT_ZERO_IMAGE_TAG:-latest}
+    image: local-ai-api-agent-zero-cockpit:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.agent-zero-cockpit
+      args:
+        AGENT_ZERO_IMAGE_TAG: ${AGENT_ZERO_IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       API_KEY_OTHER: ${API_KEY:-unused}
@@ -10,6 +15,8 @@ services:
       A0_SET__model_config__utility_model__provider: other
       A0_SET__model_config__utility_model__name: agent-utility
       A0_SET__model_config__utility_model__api_base: http://host.docker.internal:8080/v1
+      AGENT_ZERO_COCKPIT_ENABLED: ${AGENT_ZERO_COCKPIT_ENABLED:-false}
+      REPO_OPS_MCP_URL: http://repo-ops:8090/mcp
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:

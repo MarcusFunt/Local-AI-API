@@ -18,6 +18,8 @@ services:
       REPO_OPS_ACTIVE_LEASE_HOURS: ${REPO_OPS_ACTIVE_LEASE_HOURS:-24}
       REPO_OPS_WORKSPACE_TTL_DAYS: ${REPO_OPS_WORKSPACE_TTL_DAYS:-7}
       REPO_OPS_ARCHIVE_TTL_DAYS: ${REPO_OPS_ARCHIVE_TTL_DAYS:-14}
+      REPO_OPS_AUTONOMY_ENABLED: ${REPO_OPS_AUTONOMY_ENABLED:-false}
+      REPO_OPS_AUTONOMY_MAX_STORAGE_GIB: ${REPO_OPS_AUTONOMY_MAX_STORAGE_GIB:-20}
     volumes:
       - type: bind
         source: .
@@ -71,6 +73,36 @@ services:
       - no-new-privileges:true
     labels:
       local-ai-api.component: repo-ops-lifecycle
+
+  # Processes preview jobs from the shared workspace volume. It has no network,
+  # source checkout, archive mount, Agent Zero state, MCP endpoint, or host port.
+  repo-ops-preview:
+    build:
+      context: .
+      dockerfile: Dockerfile.repo-ops
+    restart: unless-stopped
+    command: ["python", "-m", "repo_ops.preview_worker"]
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+    environment:
+      REPO_OPS_WORKSPACES_ROOT: /workspaces
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - type: volume
+        source: repo-ops-workspaces
+        target: /workspaces
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 2g
+    cpus: 2.0
+    labels:
+      local-ai-api.component: repo-ops-preview
 
 volumes:
   repo-ops-workspaces:

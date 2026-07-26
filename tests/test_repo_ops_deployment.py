@@ -17,6 +17,7 @@ def test_repo_ops_overlay_is_internal_and_source_is_read_only():
     assert "cap_drop:" in compose
     assert "no-new-privileges:true" in compose
     assert "repo-ops-lifecycle:" in compose
+    assert "repo-ops-preview:" in compose
     assert "network_mode: none" in compose
     assert "REPO_OPS_ARCHIVE_ROOT: /archives" in compose
 
@@ -38,3 +39,15 @@ def test_skill_sandbox_has_no_repo_mount_or_published_port():
     assert "agent-zero-data" not in compose
     assert "agent-skill-quarantine" in compose
     assert "no-new-privileges:true" in compose
+
+
+def test_preview_worker_is_unnetworked_and_has_no_source_or_archive_mount():
+    compose = (REPO_ROOT / "compose.repo-ops.yaml").read_text(encoding="utf-8")
+    preview = compose.split("repo-ops-preview:", maxsplit=1)[1]
+
+    assert "network_mode: none" in preview
+    assert "read_only: true" in preview
+    assert "target: /source" not in preview
+    assert "target: /archives" not in preview
+    assert "ports:" not in preview
+    assert "/var/run/docker.sock" not in preview

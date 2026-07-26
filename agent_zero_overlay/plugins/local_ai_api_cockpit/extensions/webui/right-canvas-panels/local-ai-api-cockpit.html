@@ -1,0 +1,3 @@
+<div class="right-canvas-surface-panel" data-surface-id="local-ai-api-cockpit" :class="{'is-active': $store.rightCanvas?.isSurfaceVisible('local-ai-api-cockpit'), 'is-mounted': $store.rightCanvas?.isSurfaceRendered('local-ai-api-cockpit')}" :aria-hidden="(!$store.rightCanvas?.isSurfaceVisible('local-ai-api-cockpit')).toString()">
+  <x-component path="/plugins/local_ai_api_cockpit/webui/cockpit.html" mode="canvas"></x-component>
+</div>

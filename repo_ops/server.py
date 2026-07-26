@@ -180,9 +180,113 @@ async def run_check(
 async def capture_ui(
     task_id: Annotated[str, Field(description="Existing isolated task workspace.")],
 ) -> dict[str, Any]:
-    """Capture status-page timing, basic accessibility signals, console errors, and a screenshot."""
+    """Queue an unnetworked preview of this workspace's status page."""
     try:
         return manager.capture_ui(task_id)
+    except RepoOpsError as exc:
+        raise _tool_error(exc) from exc
+
+
+@mcp.tool()
+async def preview_workspace(
+    task_id: Annotated[str, Field(description="Existing isolated task workspace to preview without network access.")],
+) -> dict[str, Any]:
+    """Queue a disposable workspace's loopback-only UI preview and accessibility audit."""
+    try:
+        return manager.preview_workspace(task_id)
+    except RepoOpsError as exc:
+        raise _tool_error(exc) from exc
+
+
+@mcp.tool()
+async def preview_status(
+    task_id: Annotated[str, Field(description="Task whose queued or completed preview evidence is needed.")],
+) -> dict[str, Any]:
+    """Read preview evidence without opening a network-facing endpoint."""
+    try:
+        return manager.preview_status(task_id)
+    except RepoOpsError as exc:
+        raise _tool_error(exc) from exc
+
+
+@mcp.tool()
+async def start_autonomous_run(
+    task_id: Annotated[str, Field(description="Existing isolated task workspace.")],
+    evaluation_id: Annotated[str, Field(description="Tracked evaluation suite identifier.")] = "core-contracts",
+    policy: Annotated[dict[str, Any] | None, Field(description="Optional reductions to fixed runtime, storage, and evaluation limits.")] = None,
+) -> dict[str, Any]:
+    """Start a durable, bounded local run; it gains no extra filesystem or deployment permissions."""
+    try:
+        return manager.start_autonomous_run(task_id, evaluation_id, policy)
+    except RepoOpsError as exc:
+        raise _tool_error(exc) from exc
+
+
+@mcp.tool()
+async def autonomous_status(
+    task_id: Annotated[str, Field(description="Autonomous workspace task to inspect.")],
+) -> dict[str, Any]:
+    """Return phase, evidence trend, resource use, stop reason, and preview state."""
+    try:
+        return manager.autonomous_status(task_id)
+    except RepoOpsError as exc:
+        raise _tool_error(exc) from exc
+
+
+@mcp.tool()
+async def record_autonomous_progress(
+    task_id: Annotated[str, Field(description="Running autonomous workspace task.")],
+    summary: Annotated[str, Field(description="Bounded account of an edit, diagnosis, or decision.")],
+) -> dict[str, Any]:
+    """Record auditable local-agent progress without allowing arbitrary process execution."""
+    try:
+        return manager.record_autonomous_progress(task_id, summary)
+    except RepoOpsError as exc:
+        raise _tool_error(exc) from exc
+
+
+@mcp.tool()
+async def evaluate_workspace(
+    task_id: Annotated[str, Field(description="Running autonomous workspace task to evaluate.")],
+) -> dict[str, Any]:
+    """Run the named evaluation suite's fixed verification presets and record a score."""
+    try:
+        return manager.evaluate_workspace(task_id)
+    except RepoOpsError as exc:
+        raise _tool_error(exc) from exc
+
+
+@mcp.tool()
+async def pause_autonomous_run(
+    task_id: Annotated[str, Field(description="Running autonomous workspace task.")],
+    reason: Annotated[str, Field(description="Why the safe local run should pause.")],
+) -> dict[str, Any]:
+    """Pause a run with all evidence recoverable."""
+    try:
+        return manager.pause_autonomous_run(task_id, reason)
+    except RepoOpsError as exc:
+        raise _tool_error(exc) from exc
+
+
+@mcp.tool()
+async def resume_autonomous_run(
+    task_id: Annotated[str, Field(description="Paused autonomous workspace task.")],
+) -> dict[str, Any]:
+    """Resume only a previously paused bounded local run."""
+    try:
+        return manager.resume_autonomous_run(task_id)
+    except RepoOpsError as exc:
+        raise _tool_error(exc) from exc
+
+
+@mcp.tool()
+async def stop_autonomous_run(
+    task_id: Annotated[str, Field(description="Running or paused autonomous workspace task.")],
+    reason: Annotated[str, Field(description="Why the run must permanently stop.")],
+) -> dict[str, Any]:
+    """Stop a run without deleting its workspace, evidence, or recovery path."""
+    try:
+        return manager.stop_autonomous_run(task_id, reason)
     except RepoOpsError as exc:
         raise _tool_error(exc) from exc
 

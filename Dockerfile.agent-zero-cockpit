@@ -1,0 +1,12 @@
+# Thin local overlay for Agent Zero. The workspace cockpit itself is a bundled
+# extension; user state remains in /a0/usr and no host filesystem is mounted.
+ARG AGENT_ZERO_IMAGE_TAG=latest
+FROM agent0ai/agent-zero:${AGENT_ZERO_IMAGE_TAG}
+
+COPY agent_zero_overlay/plugins /a0/plugins
+
+# A candidate image must contain the whole authenticated cockpit boundary
+# before it can be tagged/recreated by the repository updater.
+RUN test -f /a0/plugins/local_ai_api_cockpit/plugin.yaml && \
+    test -f /a0/plugins/local_ai_api_cockpit/api/status.py && \
+    test -f /a0/plugins/local_ai_api_cockpit/webui/cockpit.js

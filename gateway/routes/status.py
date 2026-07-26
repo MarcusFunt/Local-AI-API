@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import platform
+import os
 import socket
 import time
 from datetime import UTC, datetime
@@ -162,6 +163,24 @@ def _runtime_status() -> dict[str, Any]:
     }
 
 
+def _autonomy_status() -> dict[str, Any]:
+    """Expose configuration only; repo-ops remains an internal-only service."""
+    enabled = os.environ.get("REPO_OPS_AUTONOMY_ENABLED", "false").lower() == "true"
+    try:
+        storage_gib = min(20, max(1, int(os.environ.get("REPO_OPS_AUTONOMY_MAX_STORAGE_GIB", "20"))))
+    except ValueError:
+        storage_gib = 20
+    return {
+        "enabled": enabled,
+        "workspace_preview": "internal-only" if enabled else "disabled",
+        "max_runtime_hours": 24,
+        "max_storage_gib": storage_gib,
+        "agent_zero_cockpit": os.environ.get("AGENT_ZERO_COCKPIT_ENABLED", "false").lower() == "true",
+        "agent_zero_url": f"http://127.0.0.1:{os.environ.get('AGENT_ZERO_PORT', '50080')}",
+        "note": "Autonomous workspaces cannot push, merge, deploy, or access the source checkout.",
+    }
+
+
 async def _build_status_payload() -> dict[str, Any]:
     ollama, ollama_models = await _fetch_ollama_tags()
     profiles = _profile_statuses(ollama_models)
@@ -177,6 +196,7 @@ async def _build_status_payload() -> dict[str, Any]:
         "models": profiles,
         "repository": repository,
         "last_dev_check": _LAST_DEV_CHECK,
+        "autonomy": _autonomy_status(),
     }
 
 
@@ -1452,6 +1472,7 @@ _STATUS_HTML = """<!doctype html>
       const repoStatus = deriveRepoStatus(repo);
       const repoUpdate = updateResult(repo);
       const gateway = data.gateway ?? {};
+      const autonomy = data.autonomy ?? {};
       const ollama = data.ollama ?? {};
       const authLabel = gateway.api_key_auth_enabled ? "enabled" : "disabled";
 
@@ -1518,6 +1539,18 @@ _STATUS_HTML = """<!doctype html>
             ["Dirty", boolText(repo?.dirty)],
           ],
           footerHtml: `<span class="muted">${escapeHtml(repo?.reason ?? "fast-forward only")}</span>${tabLink("update", "Open Update ->")}`,
+        }),
+        metric({
+          title: "Autonomous workspaces",
+          status: autonomy.enabled ? "ready" : "idle",
+          statusLabel: autonomy.enabled ? "Local only" : "Disabled",
+          rows: [
+            ["Preview", autonomy.workspace_preview ?? "--"],
+            ["Run limit", `${autonomy.max_runtime_hours ?? "--"}h`],
+            ["Storage limit", `${autonomy.max_storage_gib ?? "--"} GiB`],
+            ["Cockpit", autonomy.agent_zero_cockpit ? "enabled" : "disabled"],
+          ],
+          footerHtml: `<span class="muted">${escapeHtml(autonomy.note ?? "")}</span>${autonomy.agent_zero_cockpit ? `<a class="action-link" href="${escapeHtml(autonomy.agent_zero_url)}">Open cockpit -></a>` : ""}`,
         }),
         metric({
           title: "Runtime",
@@ -1708,6 +1741,7 @@ _STATUS_HTML = """<!doctype html>
 
     function renderSettings(data) {
       const gateway = data.gateway ?? {};
+      const autonomy = data.autonomy ?? {};
       els.settingsState.innerHTML = [
         panelBlock({
           title: "Gateway",
@@ -1730,6 +1764,16 @@ _STATUS_HTML = """<!doctype html>
           rows: [
             ["API key auth", enabledText(gateway.api_key_auth_enabled)],
             ["Agent Zero", enabledText(gateway.agent_zero_enabled)],
+          ],
+        }),
+        panelBlock({
+          title: "Autonomous workspaces",
+          rows: [
+            ["Enabled", enabledText(autonomy.enabled)],
+            ["Preview", autonomy.workspace_preview],
+            ["Runtime budget", `${autonomy.max_runtime_hours ?? "--"} hours`],
+            ["Storage budget", `${autonomy.max_storage_gib ?? "--"} GiB`],
+            ["Agent Zero cockpit", enabledText(autonomy.agent_zero_cockpit)],
           ],
         }),
         panelBlock({

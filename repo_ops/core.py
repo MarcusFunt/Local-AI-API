@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .autonomy import AutonomyPolicy, RUN_STATES, TERMINAL_STATES
+
 
 _TASK_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,47}$")
 _MAX_FILE_BYTES = 1_000_000
@@ -51,6 +53,7 @@ class RepoOpsConfig:
     lease_hours: int = 24
     workspace_ttl_days: int = 7
     archive_ttl_days: int = 14
+    autonomy_max_storage_gib: int = 20
 
     @classmethod
     def from_environment(cls) -> "RepoOpsConfig":
@@ -63,6 +66,7 @@ class RepoOpsConfig:
             lease_hours=int(os.environ.get("REPO_OPS_ACTIVE_LEASE_HOURS", "24")),
             workspace_ttl_days=int(os.environ.get("REPO_OPS_WORKSPACE_TTL_DAYS", "7")),
             archive_ttl_days=int(os.environ.get("REPO_OPS_ARCHIVE_TTL_DAYS", "14")),
+            autonomy_max_storage_gib=min(20, max(1, int(os.environ.get("REPO_OPS_AUTONOMY_MAX_STORAGE_GIB", "20")))),
         )
 
 
@@ -77,6 +81,9 @@ class RepoOpsManager:
         self.config.workspaces_root.mkdir(parents=True, exist_ok=True)
         self._lifecycle_root.mkdir(parents=True, exist_ok=True)
         self._archive_root.mkdir(parents=True, exist_ok=True)
+        self._autonomy_root.mkdir(parents=True, exist_ok=True)
+        self._preview_jobs_root.mkdir(parents=True, exist_ok=True)
+        self._preview_results_root.mkdir(parents=True, exist_ok=True)
 
     @property
     def _lifecycle_root(self) -> Path:
@@ -85,6 +92,18 @@ class RepoOpsManager:
     @property
     def _archive_root(self) -> Path:
         return self.config.archive_root or self.config.workspaces_root / ".archives"
+
+    @property
+    def _autonomy_root(self) -> Path:
+        return self.config.workspaces_root / ".autonomy"
+
+    @property
+    def _preview_jobs_root(self) -> Path:
+        return self.config.workspaces_root / ".preview-jobs"
+
+    @property
+    def _preview_results_root(self) -> Path:
+        return self.config.workspaces_root / ".preview-results"
 
     @staticmethod
     def _now() -> datetime:
@@ -134,6 +153,26 @@ class RepoOpsManager:
 
     def _lifecycle_path(self, task_id: str) -> Path:
         return self._lifecycle_root / f"{self._require_task_id(task_id)}.json"
+
+    def _autonomy_path(self, task_id: str) -> Path:
+        return self._autonomy_root / f"{self._require_task_id(task_id)}.json"
+
+    def _load_autonomy(self, task_id: str) -> dict[str, Any]:
+        path = self._autonomy_path(task_id)
+        if not path.is_file():
+            raise RepoOpsError("Autonomous-run metadata does not exist.")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RepoOpsError("Autonomous-run metadata is unreadable.") from exc
+        if payload.get("state") not in RUN_STATES:
+            raise RepoOpsError("Autonomous-run metadata has an invalid state.")
+        return payload
+
+    def _save_autonomy(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        payload["updated_at"] = self._timestamp()
+        self._autonomy_path(task_id).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return payload
 
     def _load_lifecycle(self, task_id: str) -> dict[str, Any]:
         path = self._lifecycle_path(task_id)
@@ -436,12 +475,41 @@ class RepoOpsManager:
             for module in python_modules
             if f"test_{Path(module).stem}.py" not in test_files
         ][:_MAX_SEARCH_RESULTS]
+        history = self.experiment_history(task_id) if task_id and self._workspace(task_id).is_dir() else []
+        candidates: list[dict[str, Any]] = []
+        for marker in markers[:20]:
+            sensitive = any(term in marker["path"].lower() for term in ("config", "auth", "middleware", "deploy"))
+            candidates.append(
+                {
+                    "kind": "marker",
+                    "path": marker["path"],
+                    "line": marker["line"],
+                    "score": 70 if not sensitive else 20,
+                    "impact_risk": "high" if sensitive else "unknown",
+                    "autonomous_eligible": not sensitive,
+                    "reason": "Explicit maintenance marker; high-risk configuration and auth paths are excluded.",
+                }
+            )
+        for module in untested[:20]:
+            candidates.append(
+                {
+                    "kind": "test_gap",
+                    "path": module,
+                    "score": 50,
+                    "impact_risk": "unknown",
+                    "autonomous_eligible": True,
+                    "reason": "Gateway module has no same-name focused test; impact analysis remains mandatory before edits.",
+                }
+            )
+        candidates.sort(key=lambda item: int(item["score"]), reverse=True)
         return {
             "root": "workspace" if task_id else "source",
             "markers": markers,
             "large_files": sorted(large_files, key=lambda item: item["lines"], reverse=True)[:20],
             "test_candidates": untested,
-            "guidance": "Use these signals to form a small hypothesis, then inspect context and impact before editing.",
+            "candidates": candidates[:20],
+            "experiment_count": len(history),
+            "guidance": "Rankings combine maintenance/test signals and recorded experiment history. High-risk paths are excluded; inspect context and impact before editing.",
         }
 
     def _experiment_log(self, task_id: str) -> Path:
@@ -501,28 +569,8 @@ class RepoOpsManager:
         return [sys.executable, "-m", "repo_ops.ui_audit", "--url", self.config.ui_base_url]
 
     def capture_ui(self, task_id: str) -> dict[str, Any]:
-        """Capture a browser audit and screenshot as task evidence outside the Git workspace."""
-        workspace = self._workspace(task_id)
-        if not workspace.is_dir():
-            raise RepoOpsError("Workspace does not exist.")
-        if not self.config.ui_base_url:
-            raise RepoOpsError("capture_ui requires REPO_OPS_UI_BASE_URL to be configured.")
-        screenshot = self._artifacts_root(task_id) / "status.png"
-        screenshot.parent.mkdir(parents=True, exist_ok=True)
-        result = self._command(
-            [sys.executable, "-m", "repo_ops.ui_audit", "--url", self.config.ui_base_url, "--screenshot", str(screenshot)],
-            cwd=workspace,
-            timeout=120,
-        )
-        if result.returncode:
-            raise RepoOpsError(f"UI capture failed: {self._output(result)}")
-        try:
-            payload = json.loads(result.stdout)
-        except json.JSONDecodeError as exc:
-            raise RepoOpsError("UI audit returned malformed JSON.") from exc
-        payload["screenshot_path"] = str(screenshot)
-        self._touch_activity(task_id)
-        return payload
+        """Queue a workspace-only UI audit; the preview worker has no network access."""
+        return self.preview_workspace(task_id)
 
     @staticmethod
     def _verification_python() -> str:
@@ -546,6 +594,177 @@ class RepoOpsManager:
         self._record_check(task_id, payload)
         self._touch_activity(task_id)
         return payload
+
+    def _workspace_bytes(self, task_id: str) -> int:
+        roots = (self._workspace(task_id), self._artifacts_root(task_id))
+        return sum(path.stat().st_size for root in roots if root.is_dir() for path in root.rglob("*") if path.is_file())
+
+    @staticmethod
+    def _evaluation_manifest() -> dict[str, Any]:
+        path = Path(__file__).with_name("evals") / "manifest.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RepoOpsError("Evaluation manifest is unavailable.") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("evaluations"), list):
+            raise RepoOpsError("Evaluation manifest is invalid.")
+        return payload
+
+    def _evaluation_definition(self, evaluation_id: str) -> dict[str, Any]:
+        for item in self._evaluation_manifest()["evaluations"]:
+            if isinstance(item, dict) and item.get("id") == evaluation_id and isinstance(item.get("checks"), list):
+                return item
+        raise RepoOpsError("Unknown evaluation suite.")
+
+    def start_autonomous_run(self, task_id: str, evaluation_id: str = "core-contracts", policy: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Start a bounded run; the caller still has only existing safe MCP tools."""
+        if not self._workspace(task_id).is_dir():
+            raise RepoOpsError("Workspace does not exist.")
+        self._evaluation_definition(evaluation_id)
+        if self._autonomy_path(task_id).exists():
+            raise RepoOpsError("An autonomous run already exists for this task ID.")
+        try:
+            safe_policy = AutonomyPolicy.from_input(
+                policy or {"max_storage_bytes": self.config.autonomy_max_storage_gib * 1024 * 1024 * 1024}
+            )
+        except ValueError as exc:
+            raise RepoOpsError(str(exc)) from exc
+        now = self._timestamp()
+        payload: dict[str, Any] = {
+            "task_id": task_id,
+            "state": "queued",
+            "started_at": now,
+            "evaluation_id": evaluation_id,
+            "policy": safe_policy.as_dict(),
+            "progress": [],
+            "evaluations": [],
+            "non_improving_evaluations": 0,
+            "stop_reason": None,
+            "preview": {"status": "not_requested"},
+        }
+        self._save_autonomy(task_id, payload)
+        payload["state"] = "running"
+        self._save_autonomy(task_id, payload)
+        self._touch_activity(task_id)
+        return self.autonomous_status(task_id)
+
+    def _apply_autonomy_budget(self, task_id: str, payload: dict[str, Any]) -> bool:
+        policy = AutonomyPolicy.from_input(payload["policy"])
+        elapsed = (self._now() - self._parse_timestamp(payload["started_at"])).total_seconds()
+        size = self._workspace_bytes(task_id)
+        if elapsed > policy.max_runtime_seconds:
+            payload.update({"state": "paused", "stop_reason": "runtime_budget_exceeded"})
+        elif size > policy.max_storage_bytes:
+            payload.update({"state": "paused", "stop_reason": "storage_budget_exceeded"})
+        else:
+            return False
+        self._save_autonomy(task_id, payload)
+        return True
+
+    def autonomous_status(self, task_id: str) -> dict[str, Any]:
+        payload = self._load_autonomy(task_id)
+        if payload["state"] not in TERMINAL_STATES:
+            self._apply_autonomy_budget(task_id, payload)
+            payload = self._load_autonomy(task_id)
+        policy = AutonomyPolicy.from_input(payload["policy"])
+        elapsed = max(0, int((self._now() - self._parse_timestamp(payload["started_at"])).total_seconds()))
+        preview = self.preview_status(task_id)
+        payload["preview"] = preview
+        payload["resource_use"] = {
+            "runtime_seconds": elapsed,
+            "runtime_limit_seconds": policy.max_runtime_seconds,
+            "storage_bytes": self._workspace_bytes(task_id),
+            "storage_limit_bytes": policy.max_storage_bytes,
+        }
+        return payload
+
+    def pause_autonomous_run(self, task_id: str, reason: str) -> dict[str, Any]:
+        if not reason.strip() or len(reason) > 500:
+            raise RepoOpsError("Pause reason must contain 1-500 characters.")
+        payload = self._load_autonomy(task_id)
+        if payload["state"] in TERMINAL_STATES:
+            raise RepoOpsError("A completed autonomous run cannot be paused.")
+        payload.update({"state": "paused", "stop_reason": reason.strip()})
+        self._save_autonomy(task_id, payload)
+        return self.autonomous_status(task_id)
+
+    def resume_autonomous_run(self, task_id: str) -> dict[str, Any]:
+        payload = self._load_autonomy(task_id)
+        if payload["state"] != "paused":
+            raise RepoOpsError("Only a paused autonomous run can resume.")
+        payload.update({"state": "running", "stop_reason": None})
+        self._save_autonomy(task_id, payload)
+        return self.autonomous_status(task_id)
+
+    def stop_autonomous_run(self, task_id: str, reason: str) -> dict[str, Any]:
+        if not reason.strip() or len(reason) > 500:
+            raise RepoOpsError("Stop reason must contain 1-500 characters.")
+        payload = self._load_autonomy(task_id)
+        if payload["state"] in TERMINAL_STATES:
+            return self.autonomous_status(task_id)
+        payload.update({"state": "stopped", "stop_reason": reason.strip()})
+        self._save_autonomy(task_id, payload)
+        return self.autonomous_status(task_id)
+
+    def record_autonomous_progress(self, task_id: str, summary: str) -> dict[str, Any]:
+        if not summary.strip() or len(summary) > 2_000:
+            raise RepoOpsError("Progress summary must contain 1-2000 characters.")
+        payload = self._load_autonomy(task_id)
+        if payload["state"] != "running":
+            raise RepoOpsError("Progress can only be recorded for a running autonomous task.")
+        payload["progress"].append({"recorded_at": self._timestamp(), "summary": summary.strip()})
+        self._save_autonomy(task_id, payload)
+        self._touch_activity(task_id)
+        return self.autonomous_status(task_id)
+
+    def evaluate_workspace(self, task_id: str) -> dict[str, Any]:
+        """Run only manifest-defined checks and update a monotonic score history."""
+        payload = self._load_autonomy(task_id)
+        if payload["state"] not in {"running", "evaluating"}:
+            raise RepoOpsError("Only a running autonomous task can be evaluated.")
+        payload["state"] = "evaluating"
+        self._save_autonomy(task_id, payload)
+        definition = self._evaluation_definition(str(payload["evaluation_id"]))
+        results = [self.run_check(task_id, str(preset)) for preset in definition["checks"]]
+        passed = sum(bool(result["passed"]) for result in results)
+        score = round(passed / len(results), 3) if results else 0.0
+        previous = payload["evaluations"][-1]["score"] if payload["evaluations"] else None
+        improved = previous is None or score > float(previous)
+        payload["non_improving_evaluations"] = 0 if improved else int(payload["non_improving_evaluations"]) + 1
+        evaluation = {"recorded_at": self._timestamp(), "id": definition["id"], "score": score, "passed": passed, "total": len(results), "results": results}
+        payload["evaluations"].append(evaluation)
+        policy = AutonomyPolicy.from_input(payload["policy"])
+        if passed == len(results) and self.git_diff(task_id)["diff"].strip():
+            self.mark_review_ready(task_id)
+            payload.update({"state": "review_ready", "stop_reason": "all_evaluations_passed"})
+        elif payload["non_improving_evaluations"] >= policy.max_non_improving_evaluations:
+            payload.update({"state": "stopped", "stop_reason": "non_improving_evaluation_limit"})
+        else:
+            payload["state"] = "running"
+        self._save_autonomy(task_id, payload)
+        return self.autonomous_status(task_id)
+
+    def preview_workspace(self, task_id: str) -> dict[str, Any]:
+        if not self._workspace(task_id).is_dir():
+            raise RepoOpsError("Workspace does not exist.")
+        self._preview_results_root.joinpath(f"{task_id}.json").unlink(missing_ok=True)
+        job = {"task_id": task_id, "requested_at": self._timestamp()}
+        self._preview_jobs_root.joinpath(f"{task_id}.json").write_text(json.dumps(job) + "\n", encoding="utf-8")
+        if self._autonomy_path(task_id).exists():
+            payload = self._load_autonomy(task_id)
+            payload["preview"] = {"status": "queued", **job}
+            self._save_autonomy(task_id, payload)
+        return {"task_id": task_id, "status": "queued", "message": "The unnetworked preview worker will collect evidence."}
+
+    def preview_status(self, task_id: str) -> dict[str, Any]:
+        result = self._preview_results_root / f"{self._require_task_id(task_id)}.json"
+        job = self._preview_jobs_root / f"{task_id}.json"
+        if result.is_file():
+            try:
+                return json.loads(result.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                return {"status": "failed", "error": "Preview result is unreadable."}
+        return {"status": "queued" if job.is_file() else "not_requested"}
 
     def _gitnexus(self, action: str, symbol: str) -> dict[str, Any]:
         if not symbol or len(symbol) > 200:
@@ -773,6 +992,15 @@ class RepoOpsManager:
         if source_head.returncode:
             raise RepoOpsError("Could not inspect source revision.")
         checks = self._checks(task_id)
+        autonomy = self.autonomous_status(task_id) if self._autonomy_path(task_id).exists() else None
+        preview = self.preview_status(task_id)
+        next_action = "Review the branch and evidence before merging or deployment."
+        if autonomy and autonomy["state"] == "paused":
+            next_action = "Review the autonomous-run budget or stop reason, then resume deliberately."
+        elif autonomy and autonomy["state"] == "running":
+            next_action = "Allow the bounded local run to continue, or inspect its current evidence."
+        elif preview["status"] == "queued":
+            next_action = "Wait for the unnetworked preview worker to complete the queued UI audit."
         return {
             "task_id": task_id,
             "state": record["state"],
@@ -784,6 +1012,9 @@ class RepoOpsManager:
             "checks": len(checks),
             "stale_checks": not checks or record["last_activity_at"] > checks[-1].get("recorded_at", ""),
             "recoverable": bool(record["workspace_exists"] or record["archive_available"]),
+            "autonomy": autonomy,
+            "preview": preview,
+            "next_action": next_action,
         }
 
     def task_report(self, task_id: str) -> dict[str, Any]:
@@ -809,5 +1040,7 @@ class RepoOpsManager:
             "post_change_revision": self._command(["git", "rev-parse", "HEAD"], cwd=workspace).stdout.strip(),
             "expires_at": lifecycle.get("expires_at"),
             "archive_due_at": lifecycle.get("archive_due_at"),
+            "autonomy": self.autonomous_status(task_id) if self._autonomy_path(task_id).exists() else None,
+            "preview": self.preview_status(task_id),
             "next_step": "Review the branch and evidence before merging or deployment.",
         }

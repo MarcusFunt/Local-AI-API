@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "evaluations": [
+    {
+      "id": "core-contracts",
+      "description": "Compile the gateway and verify repository-workspace safety contracts.",
+      "checks": ["compile", "repo_ops_tests"]
+    },
+    {
+      "id": "status-ui-contracts",
+      "description": "Verify the status GUI contract before accepting a user-interface change.",
+      "checks": ["compile", "status_ui_tests"]
+    }
+  ]
+}

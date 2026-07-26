@@ -1,0 +1,10 @@
+<html><head><script type="module" src="/plugins/local_ai_api_cockpit/webui/cockpit.js"></script></head>
+<body><section class="local-ai-api-cockpit" x-data>
+  <header><h2>Disposable workspaces</h2><button type="button" @click="window.localAiApiCockpit.refresh()">Refresh</button></header>
+  <p x-text="window.localAiApiCockpit.message"></p>
+  <template x-for="workspace in window.localAiApiCockpit.workspaces" :key="workspace.task_id">
+    <article><strong x-text="workspace.task_id"></strong><span x-text="workspace.state"></span><button type="button" @click="window.localAiApiCockpit.inspect(workspace.task_id)">Evidence</button></article>
+  </template>
+  <pre x-show="window.localAiApiCockpit.evidence" x-text="window.localAiApiCockpit.evidence"></pre>
+  <p>Review-ready evidence can be inspected here; merging, pushing, and deployment remain unavailable.</p>
+</section></body></html>

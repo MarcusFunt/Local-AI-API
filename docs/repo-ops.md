@@ -70,6 +70,11 @@ The initial GitNexus index is built from a disposable clone at worker startup.
 If startup reports an index failure, inspect `docker compose logs repo-ops` and
 rebuild the worker; do not give it write access to `/source`.
 
+## Autonomous local improvement
+
+See [autonomous workspaces](autonomous-workspaces.md) for the bounded local
+evaluation loop, the unnetworked preview worker, and the Agent Zero cockpit.
+
 ## Open-catalog skill quarantine
 
 Start a completely separate Agent Zero instance only when evaluating an

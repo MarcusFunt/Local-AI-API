@@ -83,6 +83,9 @@ class InstallConfig:
     agent_zero_enabled: bool = True
     agent_zero_port: int = 50080
     agent_zero_tailscale_https_port: int = 8443
+    enable_autonomous_workspaces: bool = False
+    autonomy_max_storage_gib: int = 20
+    agent_zero_cockpit_enabled: bool = False
 
 
 def read_model_map(repo_root: Path = REPO_ROOT) -> dict[str, str]:
@@ -202,6 +205,10 @@ def load_previous_config(
         config.agent_zero_tailscale_https_port = int(env_values["AGENT_ZERO_TAILSCALE_HTTPS_PORT"])
     config.enable_api_key_auth = _env_bool(env_values.get("ENABLE_API_KEY_AUTH"))
     config.api_key = env_values.get("API_KEY", "")
+    config.enable_autonomous_workspaces = _env_bool(env_values.get("REPO_OPS_AUTONOMY_ENABLED"))
+    config.agent_zero_cockpit_enabled = _env_bool(env_values.get("AGENT_ZERO_COCKPIT_ENABLED"))
+    if env_values.get("REPO_OPS_AUTONOMY_MAX_STORAGE_GIB", "").isdigit():
+        config.autonomy_max_storage_gib = int(env_values["REPO_OPS_AUTONOMY_MAX_STORAGE_GIB"])
 
     state_path = repo_root / GUI_STATE_PATH
     if state_path.exists():
@@ -241,6 +248,10 @@ def load_previous_config(
         config.agent_zero_tailscale_https_port = int(config.agent_zero_tailscale_https_port)
     except (TypeError, ValueError):
         config.agent_zero_tailscale_https_port = 8443
+    try:
+        config.autonomy_max_storage_gib = int(config.autonomy_max_storage_gib)
+    except (TypeError, ValueError):
+        config.autonomy_max_storage_gib = 20
 
     return config
 
@@ -336,6 +347,13 @@ def validate_config(
             errors.append("API-key auth requires a non-empty API key.")
         elif any(char.isspace() for char in config.api_key):
             errors.append("API key cannot contain whitespace.")
+    try:
+        autonomy_storage = int(config.autonomy_max_storage_gib)
+    except (TypeError, ValueError):
+        errors.append("Autonomous workspace storage limit must be a number.")
+    else:
+        if not 1 <= autonomy_storage <= 20:
+            errors.append("Autonomous workspace storage limit must be between 1 and 20 GiB.")
 
     return errors
 
@@ -377,6 +395,9 @@ def build_env_updates(
         "AGENT_ZERO_ENABLED": "true",
         "AGENT_ZERO_PORT": str(config.agent_zero_port),
         "AGENT_ZERO_TAILSCALE_HTTPS_PORT": str(config.agent_zero_tailscale_https_port),
+        "REPO_OPS_AUTONOMY_ENABLED": "true" if config.enable_autonomous_workspaces else "false",
+        "REPO_OPS_AUTONOMY_MAX_STORAGE_GIB": str(config.autonomy_max_storage_gib),
+        "AGENT_ZERO_COCKPIT_ENABLED": "true" if config.agent_zero_cockpit_enabled else "false",
         "ENABLE_API_KEY_AUTH": "true" if config.enable_api_key_auth else "false",
         "API_KEY": config.api_key.strip() if config.enable_api_key_auth else "",
     }
@@ -565,6 +586,9 @@ def run_gui() -> None:
             self.update_time_var = tk.StringVar(value=initial_config.update_time)
             self.weekly_day_var = tk.StringVar(value=initial_config.weekly_day)
             self.every_hours_var = tk.StringVar(value=str(initial_config.every_hours))
+            self.autonomy_var = tk.BooleanVar(value=initial_config.enable_autonomous_workspaces)
+            self.cockpit_var = tk.BooleanVar(value=initial_config.agent_zero_cockpit_enabled)
+            self.autonomy_storage_var = tk.StringVar(value=str(initial_config.autonomy_max_storage_gib))
             self.install_button: ttk.Button | None = None
             self.save_button: ttk.Button | None = None
             self.log_text: ScrolledText | None = None
@@ -701,8 +725,24 @@ def run_gui() -> None:
             ).grid(row=3, column=1, sticky="w", pady=2)
             ttk.Label(schedule_frame, text="hours").grid(row=3, column=1, sticky="w", padx=(72, 0), pady=2)
 
+            autonomy_frame = ttk.LabelFrame(self, text="Autonomous workspace improvement", padding=10)
+            autonomy_frame.grid(row=5, column=0, sticky="ew", pady=(0, 10))
+            ttk.Checkbutton(
+                autonomy_frame,
+                text="Enable local-only autonomous workspace runs (never push, merge, or deploy)",
+                variable=self.autonomy_var,
+            ).grid(row=0, column=0, columnspan=2, sticky="w", pady=2)
+            ttk.Checkbutton(
+                autonomy_frame,
+                text="Enable the custom Agent Zero workspace cockpit overlay",
+                variable=self.cockpit_var,
+            ).grid(row=1, column=0, columnspan=2, sticky="w", pady=2)
+            ttk.Label(autonomy_frame, text="Workspace/artifact limit (GiB)").grid(row=2, column=0, sticky="w", pady=2)
+            ttk.Combobox(autonomy_frame, textvariable=self.autonomy_storage_var, values=("5", "10", "15", "20"), state="readonly", width=8).grid(row=2, column=1, sticky="w", pady=2)
+            ttk.Label(autonomy_frame, text="Runs stop after 24 hours or three non-improving evaluations; preview stacks are internal-only.").grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
             button_frame = ttk.Frame(self)
-            button_frame.grid(row=5, column=0, sticky="ew", pady=(0, 10))
+            button_frame.grid(row=6, column=0, sticky="ew", pady=(0, 10))
             button_frame.columnconfigure(0, weight=1)
             self.save_button = ttk.Button(button_frame, text="Save settings", command=self._save_settings)
             self.save_button.grid(row=0, column=1, padx=(0, 8))
@@ -710,10 +750,10 @@ def run_gui() -> None:
             self.install_button.grid(row=0, column=2)
 
             log_frame = ttk.LabelFrame(self, text="Installer log", padding=8)
-            log_frame.grid(row=6, column=0, sticky="nsew")
+            log_frame.grid(row=7, column=0, sticky="nsew")
             log_frame.rowconfigure(0, weight=1)
             log_frame.columnconfigure(0, weight=1)
-            self.rowconfigure(6, weight=1)
+            self.rowconfigure(7, weight=1)
             self.log_text = ScrolledText(log_frame, height=15, wrap="word")
             self.log_text.grid(row=0, column=0, sticky="nsew")
             self._append_log("Ready.")
@@ -730,6 +770,7 @@ def run_gui() -> None:
         def _collect_config(self) -> InstallConfig:
             try:
                 every_hours = int(self.every_hours_var.get())
+                autonomy_storage = int(self.autonomy_storage_var.get())
             except ValueError as exc:
                 raise ValueError("Every-hours interval must be a number.") from exc
             return InstallConfig(
@@ -750,6 +791,9 @@ def run_gui() -> None:
                 agent_zero_enabled=True,
                 agent_zero_port=50080,
                 agent_zero_tailscale_https_port=8443,
+                enable_autonomous_workspaces=self.autonomy_var.get(),
+                autonomy_max_storage_gib=autonomy_storage,
+                agent_zero_cockpit_enabled=self.cockpit_var.get(),
             )
 
         def _save_settings(self) -> None:
