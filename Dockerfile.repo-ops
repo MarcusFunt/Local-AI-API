@@ -1,0 +1,38 @@
+FROM node:24-bookworm-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:$PATH \
+    REPO_OPS_VERIFICATION_PYTHON=/opt/verification-venv/bin/python
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 python3-pip python3-venv git ripgrep docker-compose && \
+    python3 -m venv "$VIRTUAL_ENV" && \
+    python3 -m venv /opt/verification-venv && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements-repo-ops.txt ./
+RUN python -m pip install --upgrade pip && \
+    python -m pip install -r requirements-repo-ops.txt && \
+    /opt/verification-venv/bin/python -m pip install --upgrade pip && \
+    /opt/verification-venv/bin/python -m pip install -r requirements.txt && \
+    npm install --global gitnexus@1.6.7 && \
+    python -m playwright install --with-deps chromium
+
+COPY repo_ops ./repo_ops
+
+RUN groupadd --system repoops && \
+    useradd --system --gid repoops --home-dir /home/repoops --create-home --shell /usr/sbin/nologin repoops && \
+    git config --system --add safe.directory /source && \
+    git config --system --add safe.directory /source/.git && \
+    mkdir -p /workspaces && \
+    chown -R repoops:repoops /app /workspaces /home/repoops
+
+USER repoops
+EXPOSE 8090
+
+CMD ["/bin/sh", "-c", "python -m repo_ops.bootstrap && exec python -m repo_ops.server"]

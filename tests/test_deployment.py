@@ -22,6 +22,7 @@ SHELL_SCRIPTS = [
     "scripts/install-or-update.sh",
     "scripts/bootstrap-ubuntu26-ai-server.sh",
     "scripts/setup-agent-runtime.sh",
+    "scripts/docker-repo-updater.sh",
     "scripts/run-agent-container.sh",
     "scripts/backup-server-state.sh",
     "scripts/verify-server-plan.sh",
@@ -117,6 +118,35 @@ def test_compose_source_keeps_ollama_models_fallback_expression():
         'models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b}"'
         in compose_source
     )
+
+
+def test_compose_includes_a_docker_side_repo_update_monitor():
+    config = _compose_config(COMPOSE_VARIANTS["cpu"])
+    updater = config["services"]["repo-updater"]
+
+    assert updater["image"] == "docker:27-cli"
+    assert updater["restart"] == "unless-stopped"
+    assert updater["environment"]["REPO_UPDATE_BRANCH"] == "main"
+    assert updater["environment"]["REPO_UPDATE_INTERVAL_SECONDS"] == "300"
+    assert any(
+        volume["type"] == "bind"
+        and volume["source"] == "/var/run/docker.sock"
+        and volume["target"] == "/var/run/docker.sock"
+        for volume in updater["volumes"]
+    )
+    assert "exec /bin/sh /repo/scripts/docker-repo-updater.sh" in updater["entrypoint"][2]
+
+
+def test_docker_repo_updater_uses_only_clean_fast_forward_updates():
+    script = (REPO_ROOT / "scripts" / "docker-repo-updater.sh").read_text(encoding="utf-8")
+
+    assert 'git -C "${REPO_DIR}" pull --ff-only "${REMOTE}" "${BRANCH}"' in script
+    assert 'refs/heads/${BRANCH}:refs/remotes/${REMOTE}/${BRANCH}' in script
+    assert "export GIT_TERMINAL_PROMPT=0" in script
+    assert 'git -C "${REPO_DIR}" diff --quiet' in script
+    assert 'git -C "${REPO_DIR}" diff --cached --quiet' in script
+    assert 'docker compose "$@" build gateway' in script
+    assert 'docker compose "$@" up -d --no-deps --force-recreate gateway' in script
 
 
 def test_agent_zero_models_are_pulled_with_custom_ollama_models():

@@ -28,13 +28,21 @@ can call directly — no separate service needed.
 ## Enabling MCP in Docker
 
 The MCP server requires `fastmcp>=2.0`. It is **not** installed by default to keep the base
-image small. Pass the `INSTALL_MCP=true` build argument when building:
+image small. Build the gateway with the `INSTALL_MCP=true` argument:
 
 ```bash
 docker build --build-arg INSTALL_MCP=true -t local-ai-api .
 ```
 
-Or in your `compose.yaml` / `compose.gpu-nvidia.yaml`:
+For the supplied Compose setup, rebuild the gateway with the same build
+argument:
+
+```bash
+docker compose build --build-arg INSTALL_MCP=true gateway
+docker compose up -d gateway
+```
+
+Or add the argument permanently to your local Compose override:
 
 ```yaml
 services:
@@ -62,7 +70,7 @@ Add the following entry to your Claude Code MCP settings.
   "mcpServers": {
     "local-ai-api": {
       "type": "http",
-      "url": "https://marcus-computer.taile97c31.ts.net/mcp/"
+      "url": "https://<your-machine>.ts.net/mcp/"
     }
   }
 }
@@ -85,7 +93,7 @@ Add the `mcpServers` block:
   "mcpServers": {
     "local-ai-api": {
       "type": "http",
-      "url": "https://marcus-computer.taile97c31.ts.net/mcp/"
+      "url": "https://<your-machine>.ts.net/mcp/"
     }
   }
 }
@@ -138,10 +146,12 @@ All traffic travels over Tailscale (WireGuard). The `/mcp` endpoint is subject t
 MCP clients must supply a `Bearer` token in the `Authorization` header.
 
 Tailscale ACLs provide an additional network-level control layer: only devices in your
-tailnet with explicit ACL grants can reach `marcus-computer`. Review your Tailscale ACL policy
+tailnet with explicit ACL grants can reach the gateway host. Review your Tailscale ACL policy
 at https://login.tailscale.com/admin/acls if you want to restrict which devices can call the
 MCP tools.
 
-Because the MCP server calls the gateway's own HTTP endpoints internally (`http://127.0.0.1:8080`),
-the loopback calls bypass Tailscale and the external auth middleware — this is intentional and
-safe as long as the host machine itself is trusted.
+The MCP server calls the gateway's own HTTP endpoints over loopback
+(`http://127.0.0.1:8080`). When API-key authentication is enabled, those
+internal calls include the configured bearer token, so they pass through the
+same gateway authentication middleware. They bypass Tailscale transport only;
+keep the host machine trusted.

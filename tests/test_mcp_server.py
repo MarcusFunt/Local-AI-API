@@ -28,6 +28,7 @@ fastmcp = pytest.importorskip("fastmcp", reason="fastmcp not installed")
 from fastmcp.exceptions import ToolError  # noqa: E402
 
 from gateway.mcp_server.server import (  # noqa: E402
+    _client,
     chat,
     health_check,
     list_models,
@@ -35,6 +36,26 @@ from gateway.mcp_server.server import (  # noqa: E402
     speak,
     transcribe,
 )
+
+
+class TestInternalGatewayClient:
+    async def test_client_uses_configured_port_and_api_key(self, monkeypatch: pytest.MonkeyPatch):
+        from gateway.config import Settings
+
+        test_settings = Settings(
+            ollama_base_url="http://127.0.0.1:11434",
+            port=9191,
+            enable_api_key_auth=True,
+            api_key="test-secret",
+        )
+        monkeypatch.setattr("gateway.mcp_server.server.settings", test_settings)
+
+        client = _client()
+        try:
+            assert str(client.base_url) == "http://127.0.0.1:9191/"
+            assert client.headers["Authorization"] == "Bearer test-secret"
+        finally:
+            await client.aclose()
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +163,23 @@ class TestListModelsTool:
 # ---------------------------------------------------------------------------
 
 class TestTranscribeTool:
+    async def test_transcribe_defaults_to_supported_small_alias(self):
+        captured_payloads: list[bytes] = []
+
+        async def capture(request: httpx.Request) -> httpx.Response:
+            captured_payloads.append(request.content)
+            return httpx.Response(200, json={"text": "Hello world"})
+
+        raw_audio = b"RIFF" + b"\x00" * 36
+        audio_b64 = base64.b64encode(raw_audio).decode()
+
+        with respx.mock(base_url=_GATEWAY) as mock:
+            mock.post("/v1/audio/transcriptions").mock(side_effect=capture)
+            await transcribe(audio_base64=audio_b64)
+
+        assert b'name="model"' in captured_payloads[0]
+        assert b"\r\nsmall\r\n" in captured_payloads[0]
+
     async def test_transcribe_decodes_base64_and_sends_file(self):
         captured_files: list = []
 
@@ -163,6 +201,10 @@ class TestTranscribeTool:
     async def test_transcribe_invalid_base64_raises_tool_error(self):
         with pytest.raises(ToolError, match="Invalid base64"):
             await transcribe(audio_base64="not-valid-base64!!!")
+
+    async def test_transcribe_rejects_non_base64_characters(self):
+        with pytest.raises(ToolError, match="Invalid base64"):
+            await transcribe(audio_base64="!!!!")
 
     async def test_transcribe_http_error_raises_tool_error(self):
         raw_audio = b"RIFF" + b"\x00" * 36

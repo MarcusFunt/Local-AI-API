@@ -24,6 +24,8 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
+from ..config import settings
+
 mcp = FastMCP(
     name="local-ai-api",
     instructions=(
@@ -34,14 +36,21 @@ mcp = FastMCP(
 )
 
 # Internal gateway URL — same process, so this is a loopback call
-_GATEWAY = "http://127.0.0.1:8080"
 _TIMEOUT = 120.0
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(base_url=_GATEWAY, timeout=_TIMEOUT)
+    """Create an authenticated loopback client for this gateway instance."""
+    headers: dict[str, str] = {}
+    if settings.enable_api_key_auth:
+        headers["Authorization"] = f"Bearer {settings.api_key}"
+    return httpx.AsyncClient(
+        base_url=f"http://127.0.0.1:{settings.port}",
+        timeout=_TIMEOUT,
+        headers=headers,
+    )
 
 
 # ── tools ─────────────────────────────────────────────────────────────────────
@@ -94,11 +103,11 @@ async def list_models() -> list[dict]:
 @mcp.tool()
 async def transcribe(
     audio_base64: Annotated[str, Field(description="Base64-encoded WAV or MP3 audio data.")],
-    model: Annotated[str, Field(description="Whisper model: tiny, base, or small. Default: small.")] = "whisper-small",
+    model: Annotated[str, Field(description="Whisper model: tiny, base, or small. Default: small.")] = "small",
 ) -> str:
     """Transcribe audio to text using local Whisper. Audio must be base64-encoded WAV."""
     try:
-        audio_bytes = base64.b64decode(audio_base64)
+        audio_bytes = base64.b64decode(audio_base64, validate=True)
     except Exception as exc:
         raise ToolError(f"Invalid base64 audio data: {exc}")
 

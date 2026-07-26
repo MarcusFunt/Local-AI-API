@@ -15,7 +15,9 @@ A private, lightweight OpenAI-compatible gateway for [Ollama](https://ollama.com
 - Supports both streaming (`stream: true`) and non-streaming responses
 - Accepts `POST /v1/audio/transcriptions` requests using local Whisper models
 - Accepts `POST /v1/audio/speech` requests using local Chatterbox TTS
-- Provides health endpoints at `GET /health` and `GET /health/ollama`
+- Provides health endpoints at `GET /health`, `GET /health/ollama`, and `GET /health/qdrant`
+- Optionally indexes and semantically searches documents with Qdrant (RAG)
+- Optionally exposes the local AI and audio operations as MCP tools at `/mcp`
 - Runs Agent Zero as a separate Docker UI that uses this gateway as an
   OpenAI-compatible provider
 
@@ -89,6 +91,25 @@ bash scripts/setup-docker.sh --no-audio --skip-tests
 
 The only host port published by Compose is `127.0.0.1:8080`. Raw Ollama remains
 private inside Docker on `127.0.0.1:11434`.
+
+### Docker-side GitHub updates
+
+The Docker stack includes a `repo-updater` service. Every five minutes by
+default, it checks `origin/main`; when the local checkout is clean and GitHub
+has a fast-forward update, it pulls that revision, rebuilds the gateway image,
+and recreates the gateway container. This leaves Ollama and its model volume
+running.
+
+Set `REPO_UPDATE_INTERVAL_SECONDS` in `.env` to adjust the polling interval
+(minimum 60 seconds). The monitor refuses to overwrite tracked local changes or
+a checkout not on `main`. For custom Compose overlays, set
+`REPO_UPDATE_COMPOSE_FILES` to the space-separated list of Compose files used
+to launch the stack.
+
+Because Docker must rebuild and restart the gateway, the monitor is mounted to
+the Docker socket. Treat anyone who can modify this repository or the updater
+container configuration as having Docker-host-level control. Inspect its output
+with `docker compose logs -f repo-updater`.
 
 ---
 
@@ -223,6 +244,15 @@ this project; keep access private through Tailscale Serve. When the gateway
 provider can authenticate to the gateway. If gateway auth is disabled, Agent
 Zero receives the harmless dummy key `unused`.
 
+### Isolated repository MCP for Agent Zero
+
+The optional repository worker gives Agent Zero bounded code search, GitNexus
+context/impact analysis, disposable branch editing, named verification checks,
+and review reports. It is not part of the gateway's Tailscale-facing `/mcp`
+server and publishes no host port. See [the repository MCP guide](docs/repo-ops.md)
+for the Compose command, Agent Zero connection URL, and the separate untrusted
+skill/plugin quarantine workflow.
+
 ---
 
 ## Graphical installer
@@ -308,6 +338,7 @@ The gateway container serves a small status GUI from the same FastAPI process:
 | `/status.json` | JSON status feed for gateway, Ollama, model readiness, and runtime settings |
 | `/status/check` | Runs a non-streaming end-to-end check against the `dev` profile (`qwen3.5:0.8b`) |
 | `/status/update` | Runs a fast-forward `git pull --ff-only` for the checkout hosting the gateway |
+| `/health/qdrant` | Reports Qdrant status; returns `disabled` when RAG is off |
 
 The status page shows gateway runtime health, Ollama connectivity, whether `main`, `small`, `dev`, `agent`, and `agent-utility` are pulled, the latest explicit dev-model inference check, and a Git update button when the gateway is running from a Git checkout. The check uses a fixed tiny prompt and does not log prompt content. The update button only performs a fast-forward pull; it refuses to overwrite local changes and reports when a restart or rebuild is recommended.
 
@@ -377,6 +408,10 @@ curl http://localhost:8080/v1/audio/speech \
   --output speech.wav
 ```
 
+Transcription supports `json` (default), `text`, and `verbose_json` response
+formats. Speech currently supports only `wav`; non-default `speed` values and
+any `voice` value are rejected with HTTP 422.
+
 Realtime speech-to-speech conversation WebSocket:
 
 ```text
@@ -441,10 +476,47 @@ small set of compatibility fields commonly sent by coding agents:
 - `response_format` with `text`, `json_object`, or `json_schema`
 - `stream_options.include_usage`, which emits a final usage chunk before
   `[DONE]`
+- `use_rag: true`, which adds retrieved document context when RAG is enabled
 
 The gateway still supports only one completion per request. Requests with
 `n > 1` return HTTP 422 instead of silently returning fewer choices than the
 client requested.
+
+## Optional RAG document search
+
+RAG adds document ingestion and semantic search backed by Qdrant. It is off by
+default, and the document routes return HTTP 503 until it is enabled. The
+Docker setup requires the Qdrant Compose overlay and the RAG dependencies:
+
+```bash
+# Set RAG_ENABLED=true and INSTALL_RAG=true in .env first.
+docker compose -f compose.yaml -f compose.qdrant.yaml up -d --build
+docker compose exec ollama ollama pull nomic-embed-text
+```
+
+In the Compose deployment, Qdrant is private in Ollama's shared network
+namespace; do not publish port 6333. The gateway exposes these authenticated
+routes (unless API-key auth is disabled):
+
+| Route | Purpose |
+|---|---|
+| `POST /v1/documents/ingest` | Upload a document (maximum 10 MiB) and index it. An optional multipart `document_id` overrides the content-derived ID. |
+| `GET /v1/documents` | List indexed documents. |
+| `DELETE /v1/documents/{document_id}` | Remove all chunks for one document. |
+| `POST /v1/search` | Search with JSON `{ "query": "...", "top_k": 4, "document_id": null }`. |
+
+Set `use_rag: true` in a chat-completions request to add retrieved context to
+that request. The conversation WebSocket has the same optional
+`session.start.use_rag` flag. When RAG is disabled, these flags are ignored.
+
+`/health/qdrant` is always available without API-key authentication, like the
+other health routes. For a direct, non-Docker run, export the RAG variables in
+the shell that launches Uvicorn: the RAG module reads process environment
+variables rather than the gateway's `.env` settings loader.
+
+The built-in MCP server is also optional. Build with FastMCP installed, then
+configure an MCP client to use `https://<machine>.ts.net/mcp/`; see
+[`docs/mcp-setup.md`](docs/mcp-setup.md) for the commands and available tools.
 
 ---
 
@@ -560,6 +632,15 @@ Docker-only variables used by `compose.yaml`:
 | `OLLAMA_KEEP_ALIVE` | `5m` | How long Ollama keeps models loaded after use. |
 | `OLLAMA_MODELS` | `qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b` | Space-separated model tags pulled by the Docker `model-init` service. |
 | `INSTALL_AUDIO` | `true` | Build the gateway image with Whisper and Chatterbox runtime dependencies. Set `false` for chat-only images. |
+| `INSTALL_RAG` | `false` | Build the gateway image with the RAG Python dependencies. Use `true` with `compose.qdrant.yaml`. |
+| `RAG_ENABLED` | `false` | Enable document routes and allow chat/conversation requests that opt into RAG. In Docker, use with `compose.qdrant.yaml`. |
+| `QDRANT_URL` | `http://127.0.0.1:6333` | Private Qdrant address used by the RAG module. |
+| `QDRANT_COLLECTION` | `local-ai-api-docs` | Qdrant collection used for document chunks. |
+| `RAG_EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model used for indexing and retrieval. |
+| `RAG_EMBED_DIM` | `768` | Embedding-vector dimension; it must match the configured embedding model. |
+| `RAG_TOP_K` | `4` | Default number of retrieved chunks. |
+| `RAG_CHUNK_SIZE` | `512` | Target document chunk size. |
+| `RAG_CHUNK_OVERLAP` | `64` | Overlap between consecutive document chunks. |
 | `AGENT_ZERO_IMAGE_TAG` | `latest` | Agent Zero Docker image tag. |
 
 In Docker, `compose.yaml` overrides `HOST=0.0.0.0` inside the shared Ollama/gateway network namespace, while the only published host port remains `127.0.0.1:8080`.
@@ -582,6 +663,7 @@ The `dev` profile is intended for faster local development and uses [Qwen/Qwen3.
 | `qwen3.5:0.8b` | `qwen3.5:0.8b` |
 | `qwen3:14b` | `qwen3:14b` |
 | `qwen3:8b` | `qwen3:8b` |
+| `openai/<approved alias or tag>` | The same approved alias or tag (the `openai/` prefix is stripped) |
 | anything else | HTTP 422 (unless `ENABLE_ARBITRARY_MODELS=true`) |
 
 ### Supported audio model values
@@ -703,3 +785,5 @@ All errors use an OpenAI-compatible envelope so clients that parse OpenAI errors
 | Audio model disabled, unknown, or unsupported format | 422 |
 | Whisper or Chatterbox dependency missing | 503 |
 | Whisper or Chatterbox runtime failure | 502 |
+| RAG route while RAG is disabled | 503 |
+| RAG vector-store failure | 502 |

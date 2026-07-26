@@ -1,0 +1,76 @@
+name: local-ai-api
+
+# Opt-in Agent Zero repository worker. It publishes no host port and is only
+# discoverable by other containers in this Compose project (not Tailscale).
+services:
+  repo-ops:
+    build:
+      context: .
+      dockerfile: Dockerfile.repo-ops
+    restart: unless-stopped
+    environment:
+      REPO_OPS_SOURCE_ROOT: /source
+      REPO_OPS_WORKSPACES_ROOT: /workspaces
+      # GitNexus labels the clone by the read-only /source mount origin.
+      REPO_OPS_GITNEXUS_REPO: source
+      REPO_OPS_UI_BASE_URL: http://host.docker.internal:8080/status
+      REPO_OPS_ARCHIVE_ROOT: /archives
+      REPO_OPS_ACTIVE_LEASE_HOURS: ${REPO_OPS_ACTIVE_LEASE_HOURS:-24}
+      REPO_OPS_WORKSPACE_TTL_DAYS: ${REPO_OPS_WORKSPACE_TTL_DAYS:-7}
+      REPO_OPS_ARCHIVE_TTL_DAYS: ${REPO_OPS_ARCHIVE_TTL_DAYS:-14}
+    volumes:
+      - type: bind
+        source: .
+        target: /source
+        read_only: true
+      - type: volume
+        source: repo-ops-workspaces
+        target: /workspaces
+      - type: bind
+        source: ${REPO_OPS_ARCHIVE_HOST_PATH:-./.local/repo-ops-archives}
+        target: /archives
+    expose:
+      - "8090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      gateway:
+        condition: service_healthy
+    labels:
+      local-ai-api.component: repo-ops
+
+  # No MCP endpoint, source checkout, Agent Zero volume, or network. This is
+  # the only component allowed to perform the scheduled destructive cleanup.
+  repo-ops-lifecycle:
+    build:
+      context: .
+      dockerfile: Dockerfile.repo-ops
+    restart: unless-stopped
+    command: ["python", "-m", "repo_ops.lifecycle"]
+    network_mode: none
+    environment:
+      REPO_OPS_WORKSPACES_ROOT: /workspaces
+      REPO_OPS_ARCHIVE_ROOT: /archives
+      REPO_OPS_WORKSPACE_TTL_DAYS: ${REPO_OPS_WORKSPACE_TTL_DAYS:-7}
+      REPO_OPS_ARCHIVE_TTL_DAYS: ${REPO_OPS_ARCHIVE_TTL_DAYS:-14}
+      REPO_OPS_SWEEP_INTERVAL_SECONDS: ${REPO_OPS_SWEEP_INTERVAL_SECONDS:-21600}
+    volumes:
+      - type: volume
+        source: repo-ops-workspaces
+        target: /workspaces
+      - type: bind
+        source: ${REPO_OPS_ARCHIVE_HOST_PATH:-./.local/repo-ops-archives}
+        target: /archives
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      local-ai-api.component: repo-ops-lifecycle
+
+volumes:
+  repo-ops-workspaces:
