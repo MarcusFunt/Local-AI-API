@@ -122,36 +122,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
-  repo-updater:
-    # Poll GitHub from inside Docker and recreate the gateway only after a
-    # clean fast-forward update of main. Access to the Docker socket is needed
-    # solely to build and restart the gateway container.
-    image: docker:27-cli
-    restart: unless-stopped
-    environment:
-      REPO_DIR: /repo
-      REPO_UPDATE_REMOTE: ${REPO_UPDATE_REMOTE:-origin}
-      REPO_UPDATE_BRANCH: ${REPO_UPDATE_BRANCH:-main}
-      REPO_UPDATE_INTERVAL_SECONDS: ${REPO_UPDATE_INTERVAL_SECONDS:-300}
-      # Optional, space-separated Compose files for non-standard deployments.
-      # When omitted, the updater discovers the active accelerator, Qdrant,
-      # and Agent Zero overlays from the running Compose project.
-      REPO_UPDATE_COMPOSE_FILES: ${REPO_UPDATE_COMPOSE_FILES:-}
-    volumes:
-      - type: bind
-        source: .
-        target: /repo
-      - type: bind
-        source: /var/run/docker.sock
-        target: /var/run/docker.sock
-    entrypoint:
-      - /bin/sh
-      - -ec
-      - |
-        apk add --no-cache git >/dev/null
-        git config --global --add safe.directory /repo
-        exec /bin/sh /repo/scripts/docker-repo-updater.sh
-
 volumes:
   ollama-data:
   gateway-model-cache:

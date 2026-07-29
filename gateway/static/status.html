@@ -887,10 +887,7 @@
             <div class="panel-body">
               <div id="update-result-label"></div>
               <dl class="kv compact" id="last-update"></dl>
-              <button class="button primary" id="run-update" type="button" style="width:100%; margin-top:14px;">
-                <span aria-hidden="true">&#8681;</span>
-                Update from Git
-              </button>
+              <p class="muted">Updates are performed only by the configured installer schedule. This page never changes the checkout.</p>
             </div>
           </article>
         </div>
@@ -931,7 +928,6 @@
       repositoryState: document.querySelector("#repository-state"),
       updateResultLabel: document.querySelector("#update-result-label"),
       lastUpdate: document.querySelector("#last-update"),
-      runUpdate: document.querySelector("#run-update"),
       runtimeState: document.querySelector("#runtime-state"),
       audioState: document.querySelector("#audio-state"),
       settingsState: document.querySelector("#settings-state"),
@@ -1132,11 +1128,9 @@
       els.modelsTabBadge.hidden = missingModels === 0;
       els.modelsTabBadge.textContent = missingModels;
 
-      const repo = data.repository;
-      const repoStatus = deriveRepoStatus(repo);
-      const showUpdateBadge = repoStatus === "running" || repoStatus === "failed" || repo?.last_update?.restart_recommended;
-      els.updateTabBadge.hidden = !showUpdateBadge;
-      els.updateTabBadge.textContent = repoStatus === "running" ? "run" : "!";
+      const lastRun = data.last_update_run;
+      els.updateTabBadge.hidden = lastRun?.status !== "failed";
+      els.updateTabBadge.textContent = "!";
     }
 
     function setActiveTab(tab) {
@@ -1168,6 +1162,7 @@
       const repoUpdate = updateResult(repo);
       const gateway = data.gateway ?? {};
       const autonomy = data.autonomy ?? {};
+      const candidate = data.agent_zero_candidate ?? {};
       const ollama = data.ollama ?? {};
       const authLabel = gateway.api_key_auth_enabled ? "enabled" : "disabled";
 
@@ -1244,6 +1239,7 @@
             ["Run limit", `${autonomy.max_runtime_hours ?? "--"}h`],
             ["Storage limit", `${autonomy.max_storage_gib ?? "--"} GiB`],
             ["Cockpit", autonomy.agent_zero_cockpit ? "enabled" : "disabled"],
+            ["Candidate", candidate.status ?? "not run"],
           ],
           footerHtml: `<span class="muted">${escapeHtml(autonomy.note ?? "")}</span>${autonomy.agent_zero_cockpit ? `<a class="action-link" href="${escapeHtml(autonomy.agent_zero_url)}">Open cockpit -></a>` : ""}`,
         }),
@@ -1322,9 +1318,9 @@
     function renderUpdate(data) {
       const repo = data.repository ?? {};
       const status = deriveRepoStatus(repo);
-      const last = repo.last_update;
-      const [resultStatus, resultLabel] = updateResult(repo, last);
-      const updateRunning = status === "running" || last?.status === "running";
+      const last = data.last_update_run;
+      const resultStatus = last?.status === "failed" ? "failed" : "idle";
+      const resultLabel = last ? (last.status === "failed" ? "Scheduled update failed" : "Scheduled update passed") : "No scheduled update recorded";
 
       els.repositoryStatusPill.outerHTML = pill(status, titleCase(status)).replace("<span", '<span id="repository-status-pill"');
       els.repositoryStatusPill = document.querySelector("#repository-status-pill");
@@ -1346,20 +1342,11 @@
         </div>
       `;
       els.lastUpdate.innerHTML = kvRows([
-        ["Started time", fmtTime(last?.started_at)],
+        ["Update owner", repo.update_owner === "installer_schedule" ? "Installer schedule" : "--"],
+        ["Scheduled", boolText(last?.scheduled)],
         ["Finished time", fmtTime(last?.finished_at)],
-        ["Duration", fmtMs(last?.latency_ms)],
-        ["Head before", last?.head_before],
-        ["Head after", last?.head_after],
-        ["Updated", boolText(last?.updated)],
-        ["Restart recommended", boolText(last?.restart_recommended)],
-        ["Output", `<span class="prebox code">${escapeHtml(last?.output ?? "--")}</span>`, { html: true }],
         ["Error", `<span class="prebox code">${escapeHtml(last?.error ?? "--")}</span>`, { html: true }],
       ]);
-
-      els.runUpdate.disabled = !repo.available || updateRunning;
-      els.runUpdate.title = repo.available ? "" : (repo.reason ?? "Repository update is unavailable.");
-      els.runUpdate.setAttribute("aria-busy", String(updateRunning));
     }
 
     function renderRuntime(data) {
@@ -1437,6 +1424,7 @@
     function renderSettings(data) {
       const gateway = data.gateway ?? {};
       const autonomy = data.autonomy ?? {};
+      const candidate = data.agent_zero_candidate ?? {};
       els.settingsState.innerHTML = [
         panelBlock({
           title: "Gateway",
@@ -1469,6 +1457,8 @@
             ["Runtime budget", `${autonomy.max_runtime_hours ?? "--"} hours`],
             ["Storage budget", `${autonomy.max_storage_gib ?? "--"} GiB`],
             ["Agent Zero cockpit", enabledText(autonomy.agent_zero_cockpit)],
+            ["Candidate image", candidate.status ?? "not run"],
+            ["Candidate checked", fmtTime(candidate.checked_at)],
           ],
         }),
         panelBlock({
@@ -1551,45 +1541,6 @@
       }
     }
 
-    async function runUpdate() {
-      if (!window.confirm("Pull the latest Git changes for Local AI API?")) return;
-      els.runUpdate.disabled = true;
-      els.runUpdate.setAttribute("aria-busy", "true");
-      els.runUpdate.innerHTML = '<span aria-hidden="true">&#8681;</span> Updating&hellip;';
-      if (currentData?.repository) {
-        currentData.repository.status = "running";
-        renderUpdate(currentData);
-      }
-      try {
-        const response = await fetch("/status/update", {
-          method: "POST",
-          headers: { "X-Local-AI-Admin-Action": "repo-update" },
-        });
-        const payload = await response.json();
-        if (!response.ok && response.status !== 409) {
-          throw new Error(payload?.error?.message ?? `Update request returned HTTP ${response.status}`);
-        }
-        const repo = currentData?.repository ?? { available: true };
-        repo.last_update = payload;
-        repo.status = payload.status;
-        renderUpdate({ repository: repo });
-        await refreshStatus();
-      } catch (error) {
-        const repo = currentData?.repository ?? { available: true };
-        repo.status = "failed";
-        repo.last_update = {
-          status: "failed",
-          error: error.message,
-          started_at: new Date().toISOString(),
-          finished_at: new Date().toISOString(),
-        };
-        renderUpdate({ repository: repo });
-      } finally {
-        els.runUpdate.innerHTML = '<span aria-hidden="true">&#8681;</span> Update from Git';
-        if (currentData) renderUpdate(currentData);
-      }
-    }
-
     els.tabs.forEach((button) => {
       button.addEventListener("click", () => setActiveTab(button.dataset.tab));
     });
@@ -1601,7 +1552,6 @@
     window.addEventListener("hashchange", () => setActiveTab(location.hash.replace("#", "")));
     els.refresh.addEventListener("click", refreshStatus);
     els.runCheck.addEventListener("click", runCheck);
-    els.runUpdate.addEventListener("click", runUpdate);
 
     setActiveTab(location.hash.replace("#", "") || "overview");
     refreshStatus();

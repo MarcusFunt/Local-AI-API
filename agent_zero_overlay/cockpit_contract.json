@@ -4,6 +4,12 @@
   "required_actions": [
     "list_workspaces",
     "create_workspace",
+    "start_autonomous_run",
+    "pause_autonomous_run",
+    "resume_autonomous_run",
+    "stop_autonomous_run",
+    "archive_workspace",
+    "create_workspace",
     "autonomous_status",
     "pause_autonomous_run",
     "resume_autonomous_run",

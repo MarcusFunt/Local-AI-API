@@ -13,7 +13,6 @@ services:
       REPO_OPS_WORKSPACES_ROOT: /workspaces
       # GitNexus labels the clone by the read-only /source mount origin.
       REPO_OPS_GITNEXUS_REPO: source
-      REPO_OPS_UI_BASE_URL: http://host.docker.internal:8080/status
       REPO_OPS_ARCHIVE_ROOT: /archives
       REPO_OPS_ACTIVE_LEASE_HOURS: ${REPO_OPS_ACTIVE_LEASE_HOURS:-24}
       REPO_OPS_WORKSPACE_TTL_DAYS: ${REPO_OPS_WORKSPACE_TTL_DAYS:-7}
@@ -33,8 +32,6 @@ services:
         target: /archives
     expose:
       - "8090"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     cap_drop:
       - ALL
     security_opt:

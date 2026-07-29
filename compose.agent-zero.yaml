@@ -16,6 +16,7 @@ services:
       A0_SET__model_config__utility_model__name: agent-utility
       A0_SET__model_config__utility_model__api_base: http://host.docker.internal:8080/v1
       AGENT_ZERO_COCKPIT_ENABLED: ${AGENT_ZERO_COCKPIT_ENABLED:-false}
+      GATEWAY_STATUS_URL: http://host.docker.internal:8080/status.json
       REPO_OPS_MCP_URL: http://repo-ops:8090/mcp
     extra_hosts:
       - "host.docker.internal:host-gateway"

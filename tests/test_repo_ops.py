@@ -83,7 +83,7 @@ def test_only_named_check_presets_are_available(manager: RepoOpsManager):
     assert manager._check_command(workspace, "compile")[-2:] == ["compileall", "gateway"]
     with pytest.raises(RepoOpsError, match="Unknown check"):
         manager._check_command(workspace, "rm -rf /")
-    with pytest.raises(RepoOpsError, match="requires REPO_OPS_UI_BASE_URL"):
+    with pytest.raises(RepoOpsError, match="Unknown check"):
         manager._check_command(workspace, "ui_audit")
 
 

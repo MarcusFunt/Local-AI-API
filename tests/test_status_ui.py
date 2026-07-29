@@ -43,10 +43,10 @@ class TestStatusPage:
         assert "Audio" in resp.text
         assert "Settings" in resp.text
         assert 'id="global-status"' in resp.text
-        assert "Update from Git" in resp.text
+        assert "Updates are performed only by the configured installer schedule" in resp.text
         assert "/status.json" in resp.text
-        assert "/status/update" in resp.text
-        assert "X-Local-AI-Admin-Action" in resp.text
+        assert "/status/update" not in resp.text
+        assert "X-Local-AI-Admin-Action" not in resp.text
         assert "Autonomous workspaces" in resp.text
 
     async def test_status_path_renders_same_gui(self, client: httpx.AsyncClient):
@@ -224,61 +224,10 @@ class TestStatusCheck:
         assert body["error"] == "Dev model check expected exactly 'ok'."
 
 
-class TestStatusUpdate:
-    async def test_update_requires_confirmation_header(self, client: httpx.AsyncClient):
-        resp = await client.post("/status/update")
+async def test_status_update_endpoint_is_not_available(client: httpx.AsyncClient):
+    resp = await client.post("/status/update")
 
-        assert resp.status_code == 403
-        body = resp.json()
-        assert body["error"]["code"] == "status_update_confirmation_required"
-
-    async def test_update_runs_when_confirmation_header_is_present(
-        self,
-        client: httpx.AsyncClient,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        import gateway.routes.status as status_module
-
-        async def fake_update():
-            return {
-                "status": "passed",
-                "updated": True,
-                "head_before": "abc1234",
-                "head_after": "def5678",
-            }
-
-        monkeypatch.setattr(status_module, "run_repo_update", fake_update)
-
-        resp = await client.post(
-            "/status/update",
-            headers={"X-Local-AI-Admin-Action": "repo-update"},
-        )
-
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["status"] == "passed"
-        assert body["updated"] is True
-        assert body["head_after"] == "def5678"
-
-    async def test_update_returns_conflict_when_already_running(
-        self,
-        client: httpx.AsyncClient,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        import gateway.routes.status as status_module
-
-        async def fake_update():
-            return {"status": "running", "message": "Repository update is already running."}
-
-        monkeypatch.setattr(status_module, "run_repo_update", fake_update)
-
-        resp = await client.post(
-            "/status/update",
-            headers={"X-Local-AI-Admin-Action": "repo-update"},
-        )
-
-        assert resp.status_code == 409
-        assert resp.json()["status"] == "running"
+    assert resp.status_code == 404
 
 
 async def test_last_update_run_reads_marker_and_tolerates_missing():

@@ -51,3 +51,13 @@ def test_preview_worker_is_unnetworked_and_has_no_source_or_archive_mount():
     assert "target: /archives" not in preview
     assert "ports:" not in preview
     assert "/var/run/docker.sock" not in preview
+
+
+def test_preview_worker_has_its_package_and_browser_runtime_paths():
+    worker = (REPO_ROOT / "repo_ops" / "preview_worker.py").read_text(encoding="utf-8")
+    image = (REPO_ROOT / "Dockerfile.repo-ops").read_text(encoding="utf-8")
+
+    assert '"PYTHONPATH": "/app"' in worker
+    assert '"PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright"' in worker
+    assert "--screenshot" in worker
+    assert "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright" in image
