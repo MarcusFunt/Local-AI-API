@@ -47,8 +47,14 @@ jobs:
       - name: Run test suite inside the built image
         run: |
           docker run --rm \
-            --entrypoint python \
-            --mount type=bind,source="${{ github.workspace }}",target=/workspace,readonly \
-            --workdir /workspace \
+            --user root \
+            --entrypoint /bin/sh \
+            --mount type=bind,source="${{ github.workspace }}",target=/source,readonly \
             local-ai-api-gateway:latest \
-            -m pytest tests -v
+            -ec '
+              apt-get update >/dev/null
+              apt-get install -y --no-install-recommends ripgrep >/dev/null
+              cp -a /source /workspace
+              chown -R app:app /workspace
+              exec su -s /bin/sh app -c "cd /workspace && python -m pytest tests -v"
+            '
