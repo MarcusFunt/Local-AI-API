@@ -48,5 +48,7 @@ jobs:
         run: |
           docker run --rm \
             --entrypoint python \
+            --mount type=bind,source="${{ github.workspace }}",target=/workspace,readonly \
+            --workdir /workspace \
             local-ai-api-gateway:latest \
             -m pytest tests -v
