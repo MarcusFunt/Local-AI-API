@@ -49,9 +49,8 @@ gateway uses Ollama's separate network namespace and cannot reach it.
 2. Create a workspace with `create_workspace` and make only hash-checked
    `write_file` edits there.
 3. Run named checks: `unit`, `compile`, `compose_config`, `status_ui_tests`,
-   `repo_ops_tests`, `dependency_health`, and, when the status page is
-   available, `ui_audit`. Use `capture_ui` for a screenshot plus basic
-   accessibility and timing evidence.
+   `repo_ops_tests`, and `dependency_health`. Use `capture_ui` for the
+   only UI audit: a workspace-only screenshot plus accessibility and timing evidence.
 4. Record each hypothesis and outcome with `record_experiment`, so later task
    runs can read `experiment_history` instead of repeating failed ideas.
 5. Return `git_diff` and `task_report` for review. A human reviews and merges

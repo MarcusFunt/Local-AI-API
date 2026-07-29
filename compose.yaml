@@ -79,10 +79,10 @@ services:
     network_mode: service:ollama
     environment: *gateway-environment
     volumes:
-      # Bind-mount the host repo so the container has a live .git checkout.
-      # This lets app_update.py run `git pull` inside the container and have
-      # it take effect on the host source tree.  Python packages are installed
-      # to the system Python path (not /app), so this mount does not shadow them.
+      # Bind-mount the host repo so status can report checkout state and read
+      # installer-owned update and Agent Zero candidate markers. Python packages
+      # are installed to the system Python path (not /app), so this mount does
+      # not shadow them.
       - type: bind
         source: .
         target: /app
@@ -121,36 +121,6 @@ services:
       AUTOHEAL_START_PERIOD: "90"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-
-  repo-updater:
-    # Poll GitHub from inside Docker and recreate the gateway only after a
-    # clean fast-forward update of main. Access to the Docker socket is needed
-    # solely to build and restart the gateway container.
-    image: docker:27-cli
-    restart: unless-stopped
-    environment:
-      REPO_DIR: /repo
-      REPO_UPDATE_REMOTE: ${REPO_UPDATE_REMOTE:-origin}
-      REPO_UPDATE_BRANCH: ${REPO_UPDATE_BRANCH:-main}
-      REPO_UPDATE_INTERVAL_SECONDS: ${REPO_UPDATE_INTERVAL_SECONDS:-300}
-      # Optional, space-separated Compose files for non-standard deployments.
-      # When omitted, the updater discovers the active accelerator, Qdrant,
-      # and Agent Zero overlays from the running Compose project.
-      REPO_UPDATE_COMPOSE_FILES: ${REPO_UPDATE_COMPOSE_FILES:-}
-    volumes:
-      - type: bind
-        source: .
-        target: /repo
-      - type: bind
-        source: /var/run/docker.sock
-        target: /var/run/docker.sock
-    entrypoint:
-      - /bin/sh
-      - -ec
-      - |
-        apk add --no-cache git >/dev/null
-        git config --global --add safe.directory /repo
-        exec /bin/sh /repo/scripts/docker-repo-updater.sh
 
 volumes:
   ollama-data:

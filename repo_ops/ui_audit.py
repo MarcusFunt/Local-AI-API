@@ -1,4 +1,4 @@
-"""Small browser audit invoked only through the ui_audit check preset."""
+"""Small browser audit invoked only by the isolated workspace preview worker."""
 from __future__ import annotations
 
 import argparse

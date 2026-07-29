@@ -36,7 +36,14 @@ def _run(task_id: str) -> dict[str, object]:
     if not workspace.is_dir():
         return {"status": "failed", "error": "Workspace does not exist.", "finished_at": _now()}
     port = _free_port()
-    environment = {"PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1", "NO_PROXY": "*"}
+    environment = {
+        "HOME": "/home/repoops",
+        "NO_PROXY": "*",
+        "PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPATH": "/app",
+        "PYTHONUNBUFFERED": "1",
+    }
     server = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "gateway.main:app", "--host", "127.0.0.1", "--port", str(port)],
         cwd=workspace,
@@ -46,8 +53,17 @@ def _run(task_id: str) -> dict[str, object]:
     )
     try:
         time.sleep(1.5)
+        screenshot = RESULTS / f"{task_id}.png"
         result = subprocess.run(
-            [sys.executable, "-m", "repo_ops.ui_audit", "--url", f"http://127.0.0.1:{port}/status"],
+            [
+                sys.executable,
+                "-m",
+                "repo_ops.ui_audit",
+                "--url",
+                f"http://127.0.0.1:{port}/status",
+                "--screenshot",
+                str(screenshot),
+            ],
             cwd=workspace,
             env=environment,
             capture_output=True,
@@ -56,7 +72,13 @@ def _run(task_id: str) -> dict[str, object]:
             check=False,
         )
         payload: dict[str, object] = json.loads(result.stdout) if result.stdout else {}
-        payload.update({"status": "passed" if result.returncode == 0 else "failed", "finished_at": _now()})
+        payload.update(
+            {
+                "status": "passed" if result.returncode == 0 else "failed",
+                "finished_at": _now(),
+                "screenshot": str(screenshot) if screenshot.is_file() else None,
+            }
+        )
         if result.returncode:
             payload["error"] = result.stderr[-2000:] or "Preview audit failed."
         return payload

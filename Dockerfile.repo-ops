@@ -5,6 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     VIRTUAL_ENV=/opt/venv \
     PATH=/opt/venv/bin:$PATH \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     REPO_OPS_VERIFICATION_PYTHON=/opt/verification-venv/bin/python
 
 WORKDIR /app
@@ -29,8 +30,8 @@ RUN groupadd --system repoops && \
     useradd --system --gid repoops --home-dir /home/repoops --create-home --shell /usr/sbin/nologin repoops && \
     git config --system --add safe.directory /source && \
     git config --system --add safe.directory /source/.git && \
-    mkdir -p /workspaces && \
-    chown -R repoops:repoops /app /workspaces /home/repoops
+    mkdir -p /workspaces /ms-playwright && \
+    chown -R repoops:repoops /app /workspaces /ms-playwright /home/repoops
 
 USER repoops
 EXPOSE 8090

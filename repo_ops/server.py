@@ -167,7 +167,7 @@ async def write_file(
 @mcp.tool()
 async def run_check(
     task_id: Annotated[str, Field(description="Existing isolated task workspace.")],
-    preset: Annotated[str, Field(description="One of unit, compile, compose_config, or ui_audit.")],
+    preset: Annotated[str, Field(description="One of unit, compile, compose_config, status_ui_tests, repo_ops_tests, or dependency_health.")],
 ) -> dict[str, Any]:
     """Run one named verification preset; arbitrary shell commands are unavailable."""
     try:

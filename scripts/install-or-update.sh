@@ -195,6 +195,18 @@ sync_repo_to_github() {
   log "Fetching ${REMOTE_NAME}/${REMOTE_BRANCH}."
   git -C "${root}" fetch --prune "${REMOTE_NAME}" "${REMOTE_BRANCH}"
 
+  if [[ "${LOCAL_AI_API_SYSTEMD:-}" == "1" ]]; then
+    if [[ -n "$(git -C "${root}" status --porcelain)" ]]; then
+      die "Scheduled updates refuse a dirty checkout; resolve or commit local changes first."
+    fi
+    if ! git -C "${root}" merge-base --is-ancestor HEAD "${REMOTE_NAME}/${REMOTE_BRANCH}"; then
+      die "Scheduled updates require a fast-forward path to ${REMOTE_NAME}/${REMOTE_BRANCH}."
+    fi
+    log "Fast-forwarding scheduled update to ${REMOTE_NAME}/${REMOTE_BRANCH}."
+    git -C "${root}" pull --ff-only "${REMOTE_NAME}" "${REMOTE_BRANCH}"
+    return
+  fi
+
   log "Forcing tracked files to ${REMOTE_NAME}/${REMOTE_BRANCH}."
   git -C "${root}" reset --hard "${REMOTE_NAME}/${REMOTE_BRANCH}"
 
@@ -630,6 +642,11 @@ main() {
   mapfile -t compose_args < <(compose_files_for_accelerator "${root}" "${accelerator}")
 
   build_and_test_gateway_image "${root}" "${compose_args[@]}"
+  if [[ "${AGENT_ZERO_ENABLED}" == "1" ]]; then
+    if ! sh "${root}/scripts/update-agent-zero-cockpit.sh"; then
+      log "Agent Zero candidate validation failed; retaining the last known-good local image."
+    fi
+  fi
   start_stack "${root}" "${compose_args[@]}"
 
   wait_for_url "${GATEWAY_HEALTH_URL}" "Gateway health"

@@ -9,7 +9,22 @@ import httpx
 from helpers.api import ApiHandler, Input, Output, Request, Response
 
 
-_ALLOWED_TOOLS = {"list_workspaces", "workspace_health", "autonomous_status", "git_diff", "task_report"}
+_ALLOWED_TOOLS = {
+    "archive_workspace",
+    "autonomous_status",
+    "create_workspace",
+    "evaluate_workspace",
+    "git_diff",
+    "list_workspaces",
+    "pause_autonomous_run",
+    "preview_workspace",
+    "resume_autonomous_run",
+    "start_autonomous_run",
+    "stop_autonomous_run",
+    "task_report",
+    "workspace_health",
+}
+_CANDIDATE_STATUS_TOOL = "candidate_status"
 
 
 class Status(ApiHandler):
@@ -21,8 +36,12 @@ class Status(ApiHandler):
     """
 
     async def process(self, input: Input, request: Request) -> Output:
+        if os.environ.get("AGENT_ZERO_COCKPIT_ENABLED", "false").lower() != "true":
+            return Response("Workspace cockpit is disabled by local configuration.", 403)
         tool = str(input.get("tool", "list_workspaces"))
         arguments = input.get("arguments", {})
+        if tool == _CANDIDATE_STATUS_TOOL:
+            return await self._candidate_status()
         if tool not in _ALLOWED_TOOLS or not isinstance(arguments, dict):
             return Response("Unsupported cockpit action.", 400)
         endpoint = os.environ.get("REPO_OPS_MCP_URL", "http://repo-ops:8090/mcp")
@@ -64,3 +83,18 @@ class Status(ApiHandler):
             return {"ok": True, "tool": tool, "result": response.json()}
         except (httpx.HTTPError, ValueError) as exc:
             return Response(f"Workspace cockpit request failed: {exc}", 502)
+
+    async def _candidate_status(self) -> Output:
+        url = os.environ.get("GATEWAY_STATUS_URL", "http://host.docker.internal:8080/status.json")
+        headers: dict[str, str] = {}
+        key = os.environ.get("API_KEY_OTHER", "").strip()
+        if key and key != "unused":
+            headers["Authorization"] = f"Bearer {key}"
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.get(url, headers=headers)
+                response.raise_for_status()
+            payload = response.json()
+            return {"ok": True, "tool": _CANDIDATE_STATUS_TOOL, "result": payload.get("agent_zero_candidate")}
+        except (httpx.HTTPError, ValueError) as exc:
+            return Response(f"Candidate status request failed: {exc}", 502)

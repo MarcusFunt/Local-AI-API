@@ -19,5 +19,8 @@ A–AA evidence, and terminates the server before reporting the result.
 The Agent Zero cockpit is a small plugin overlay. Browser code calls only the
 same-origin authenticated Agent Zero plugin API; its allow-listed backend proxy
 is the only component that reaches internal `repo-ops`. Rebuild it against
-upstream with `scripts/update-agent-zero-cockpit.sh`; a failed candidate does
-not replace the active image.
+configured Agent Zero image tag with `scripts/update-agent-zero-cockpit.sh`;
+a failed candidate does not replace the active image. Starting a bounded run
+persists policy and evidence only: it does not itself invoke a model or modify
+files. An approved agent must use the existing workspace MCP edit tools
+separately.

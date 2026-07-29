@@ -10,8 +10,8 @@ Start by calling improvement_inventory to choose an evidence-backed small goal.
 Before editing an existing symbol, call symbol_context and impact_analysis.
 Start each objective with repo_status, then create exactly one isolated
 workspace. Make small, reversible, hash-checked edits only in that workspace.
-Run relevant named checks and inspect their output. For a UI change, run the
-ui_audit preset and capture_ui when the status UI is reachable. Record each
+Run relevant named checks and inspect their output. For a UI change, use
+capture_ui to queue the isolated workspace preview. Record each
 hypothesis, outcome, and evidence with record_experiment before the next loop.
 
 Never request arbitrary shell access. Never merge, push, deploy, alter

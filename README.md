@@ -93,24 +93,16 @@ bash scripts/setup-docker.sh --no-audio --skip-tests
 The only host port published by Compose is `127.0.0.1:8080`. Raw Ollama remains
 private inside Docker on `127.0.0.1:11434`.
 
-### Docker-side GitHub updates
+### Scheduled updates
 
-The Docker stack includes a `repo-updater` service. Every five minutes by
-default, it checks `origin/main`; when the local checkout is clean and GitHub
-has a fast-forward update, it pulls that revision, rebuilds the gateway image,
-and recreates the gateway container. This leaves Ollama and its model volume
-running.
+The host installer is the only update owner. Its optional systemd timer or
+Windows scheduled task fast-forwards a clean checkout, validates the rebuilt
+gateway image, and records the outcome in `.local/last-update.json`.
 
-Set `REPO_UPDATE_INTERVAL_SECONDS` in `.env` to adjust the polling interval
-(minimum 60 seconds). The monitor refuses to overwrite tracked local changes or
-a checkout not on `main`. For custom Compose overlays, set
-`REPO_UPDATE_COMPOSE_FILES` to the space-separated list of Compose files used
-to launch the stack.
+Scheduled runs refuse dirty or non-fast-forward checkouts; use an explicit
+manual installer run only when you intend to replace local work.
 
-Because Docker must rebuild and restart the gateway, the monitor is mounted to
-the Docker socket. Treat anyone who can modify this repository or the updater
-container configuration as having Docker-host-level control. Inspect its output
-with `docker compose logs -f repo-updater`.
+The status page is read-only and reports the latest installer update marker.
 
 ---
 
@@ -400,10 +392,9 @@ The gateway container serves a small status GUI from the same FastAPI process:
 | `/status` | Status GUI alias |
 | `/status.json` | JSON status feed for gateway, Ollama, model readiness, and runtime settings |
 | `/status/check` | Runs a non-streaming end-to-end check against the `dev` profile (`qwen3.5:0.8b`) |
-| `/status/update` | Runs a fast-forward `git pull --ff-only` for the checkout hosting the gateway |
 | `/health/qdrant` | Reports Qdrant status; returns `disabled` when RAG is off |
 
-The status page shows gateway runtime health, Ollama connectivity, whether `main`, `small`, `dev`, `agent`, and `agent-utility` are pulled, the latest explicit dev-model inference check, and a Git update button when the gateway is running from a Git checkout. The check uses a fixed tiny prompt and does not log prompt content. The update button only performs a fast-forward pull; it refuses to overwrite local changes and reports when a restart or rebuild is recommended.
+The status page shows gateway runtime health, Ollama connectivity, whether `main`, `small`, `dev`, `agent`, and `agent-utility` are pulled, the latest explicit dev-model inference check, and the latest installer update result when the gateway is running from a Git checkout. The check uses a fixed tiny prompt and does not log prompt content. The status page is read-only: the configured host installer schedule is the only update owner.
 
 `/status.json` also includes a `last_update_run` field: the installers write a `.local/last-update.json` marker after every scheduled or manual run (`passed`/`failed`, timestamp, and whether it was scheduled), so a nightly auto-update that failed silently — for example because a test flaked during the in-image gate — is visible here instead of only in the systemd journal or Task Scheduler history.
 

@@ -7,13 +7,13 @@ import socket
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Any
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from ..app_update import get_repo_update_status, run_repo_update
+from ..app_update import get_repo_update_status
 from ..config import settings
 from ..normalize import MODEL_MAP, required_model_aliases, resolve_model
 
@@ -23,7 +23,6 @@ _STARTED_AT = time.monotonic()
 _STATUS_TIMEOUT = 5.0
 _CHECK_TIMEOUT = 120.0
 _DEV_ALIAS = "dev"
-_UPDATE_HEADER_VALUE = "repo-update"
 _LAST_DEV_CHECK: dict[str, Any] | None = None
 
 
@@ -194,6 +193,16 @@ def _last_update_run() -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _agent_zero_candidate_status() -> dict[str, Any] | None:
+    """Read the candidate-image result written by the local installer."""
+    marker = Path(__file__).resolve().parents[2] / ".local" / "agent-zero-candidate.json"
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 async def _build_status_payload() -> dict[str, Any]:
     ollama, ollama_models = await _fetch_ollama_tags()
     profiles = _profile_statuses(ollama_models)
@@ -211,6 +220,7 @@ async def _build_status_payload() -> dict[str, Any]:
         "last_dev_check": _LAST_DEV_CHECK,
         "autonomy": _autonomy_status(),
         "last_update_run": _last_update_run(),
+        "agent_zero_candidate": _agent_zero_candidate_status(),
     }
 
 
@@ -295,26 +305,6 @@ async def run_status_check() -> JSONResponse:
     global _LAST_DEV_CHECK
     _LAST_DEV_CHECK = await _run_dev_check()
     return JSONResponse(_LAST_DEV_CHECK)
-
-
-@router.post("/status/update")
-async def run_status_update(
-    x_local_ai_admin_action: Annotated[str | None, Header()] = None,
-) -> JSONResponse:
-    if x_local_ai_admin_action != _UPDATE_HEADER_VALUE:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": {
-                    "message": "Missing status update confirmation header.",
-                    "type": "forbidden",
-                    "code": "status_update_confirmation_required",
-                }
-            },
-        )
-    result = await run_repo_update()
-    status_code = 409 if result.get("status") == "running" else 200
-    return JSONResponse(result, status_code=status_code)
 
 
 def _load_status_html() -> str:

@@ -26,7 +26,6 @@ _ALLOWED_CHECKS = {
     "unit",
     "compile",
     "compose_config",
-    "ui_audit",
     "status_ui_tests",
     "repo_ops_tests",
     "dependency_health",
@@ -48,7 +47,6 @@ class RepoOpsConfig:
     source_root: Path
     workspaces_root: Path
     gitnexus_repo: str = "source"
-    ui_base_url: str | None = None
     archive_root: Path | None = None
     lease_hours: int = 24
     workspace_ttl_days: int = 7
@@ -61,7 +59,6 @@ class RepoOpsConfig:
             source_root=Path(os.environ.get("REPO_OPS_SOURCE_ROOT", "/source")),
             workspaces_root=Path(os.environ.get("REPO_OPS_WORKSPACES_ROOT", "/workspaces")),
             gitnexus_repo=os.environ.get("REPO_OPS_GITNEXUS_REPO", "source"),
-            ui_base_url=os.environ.get("REPO_OPS_UI_BASE_URL") or None,
             archive_root=Path(os.environ["REPO_OPS_ARCHIVE_ROOT"]) if os.environ.get("REPO_OPS_ARCHIVE_ROOT") else None,
             lease_hours=int(os.environ.get("REPO_OPS_ACTIVE_LEASE_HOURS", "24")),
             workspace_ttl_days=int(os.environ.get("REPO_OPS_WORKSPACE_TTL_DAYS", "7")),
@@ -549,7 +546,7 @@ class RepoOpsManager:
     def _check_command(self, workspace: Path, preset: str) -> list[str]:
         if preset not in _ALLOWED_CHECKS:
             raise RepoOpsError(
-                "Unknown check preset. Allowed: unit, compile, compose_config, ui_audit, "
+                "Unknown check preset. Allowed: unit, compile, compose_config, "
                 "status_ui_tests, repo_ops_tests, dependency_health."
             )
         if preset == "unit":
@@ -564,9 +561,7 @@ class RepoOpsManager:
             return [self._verification_python(), "-m", "pytest", "tests/test_repo_ops.py", "tests/test_repo_ops_deployment.py", "-v"]
         if preset == "dependency_health":
             return [self._verification_python(), "-m", "pip", "check"]
-        if not self.config.ui_base_url:
-            raise RepoOpsError("ui_audit requires REPO_OPS_UI_BASE_URL to be configured.")
-        return [sys.executable, "-m", "repo_ops.ui_audit", "--url", self.config.ui_base_url]
+        raise RepoOpsError("Unknown check preset.")
 
     def capture_ui(self, task_id: str) -> dict[str, Any]:
         """Queue a workspace-only UI audit; the preview worker has no network access."""

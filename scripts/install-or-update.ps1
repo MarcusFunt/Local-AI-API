@@ -304,6 +304,23 @@ function Sync-RepoToGitHub {
     Write-Log "Fetching $RemoteName/$RemoteBranch."
     Invoke-External -FilePath "git" -Arguments @("-C", $Root, "fetch", "--prune", $RemoteName, $RemoteBranch)
 
+    if ($ScheduledRun) {
+        $dirty = & git -C $Root status --porcelain
+        if ($LASTEXITCODE -ne 0) {
+            Stop-Fail "Could not inspect Git checkout state."
+        }
+        if (-not [string]::IsNullOrWhiteSpace(($dirty -join [Environment]::NewLine))) {
+            Stop-Fail "Scheduled updates refuse a dirty checkout; resolve or commit local changes first."
+        }
+        & git -C $Root merge-base --is-ancestor HEAD "$RemoteName/$RemoteBranch"
+        if ($LASTEXITCODE -ne 0) {
+            Stop-Fail "Scheduled updates require a fast-forward path to $RemoteName/$RemoteBranch."
+        }
+        Write-Log "Fast-forwarding scheduled update to $RemoteName/$RemoteBranch."
+        Invoke-External -FilePath "git" -Arguments @("-C", $Root, "pull", "--ff-only", $RemoteName, $RemoteBranch)
+        return
+    }
+
     Write-Log "Forcing tracked files to $RemoteName/$RemoteBranch."
     Invoke-External -FilePath "git" -Arguments @("-C", $Root, "reset", "--hard", "$RemoteName/$RemoteBranch")
 
@@ -626,6 +643,16 @@ function Install-ScheduledTask {
         -Force | Out-Null
 }
 
+function Invoke-CockpitCandidate {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $candidateScript = Join-Path $Root "scripts\update-agent-zero-cockpit.ps1"
+    & $candidateScript -RepoRoot $Root
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "Agent Zero candidate validation failed; retaining the last known-good local image."
+    }
+}
+
 function Main {
     Require-Windows
     Acquire-Lock
@@ -655,6 +682,9 @@ function Main {
     $composeArguments = @(Get-ComposeArgumentsForAccelerator -Root $root -SelectedAccelerator $selectedAccelerator)
 
     Build-And-TestGatewayImage -ComposeArguments $composeArguments
+    if ($script:AgentZeroEnabled) {
+        Invoke-CockpitCandidate -Root $root
+    }
     Start-Stack -ComposeArguments $composeArguments
 
     Wait-ForUrl -Url $GatewayHealthUrl -Label "Gateway health"
