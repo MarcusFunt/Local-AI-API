@@ -215,13 +215,13 @@
 <body class="local-ai-api-cockpit-body">
   <section class="local-ai-api-cockpit" x-data="window.localAiApiCockpitView()" x-init="connect()" x-destroy="dispose()">
     <header class="local-ai-api-cockpit-header">
-      <div>
+      <div class="local-ai-api-cockpit-title" x-show="!embedded">
         <p class="local-ai-api-cockpit-eyebrow">Local-only operations</p>
         <h2>Disposable workspaces</h2>
       </div>
       <div class="local-ai-api-cockpit-toolbar" aria-label="Workspace controls">
-        <button class="local-ai-api-cockpit-button primary" type="button" @click="create()">Create workspace</button>
-        <button class="local-ai-api-cockpit-button" type="button" @click="refresh()">Refresh</button>
+        <button class="local-ai-api-cockpit-button primary" type="button" data-cockpit-control="create" @click="create()">Create workspace</button>
+        <button class="local-ai-api-cockpit-button" type="button" data-cockpit-control="refresh" @click="refresh()">Refresh</button>
       </div>
     </header>
 
@@ -234,17 +234,31 @@
         <article class="local-ai-api-cockpit-workspace">
           <div class="local-ai-api-cockpit-workspace-header">
             <strong x-text="workspace.task_id"></strong>
-            <span class="local-ai-api-cockpit-state" x-text="workspace.state"></span>
+            <span class="local-ai-api-cockpit-state" x-text="workspace.run_state === 'not_started' ? 'ready to start' : workspace.run_state"></span>
           </div>
           <div class="local-ai-api-cockpit-actions" aria-label="Workspace actions">
             <button class="local-ai-api-cockpit-button" type="button" @click="inspect(workspace.task_id)">Evidence</button>
-            <button class="local-ai-api-cockpit-button primary" type="button" @click="action('start_autonomous_run', {task_id: workspace.task_id})">Start</button>
-            <button class="local-ai-api-cockpit-button" type="button" @click="action('evaluate_workspace', {task_id: workspace.task_id})">Evaluate</button>
-            <button class="local-ai-api-cockpit-button" type="button" @click="action('preview_workspace', {task_id: workspace.task_id})">Preview</button>
-            <button class="local-ai-api-cockpit-button" type="button" @click="pause(workspace.task_id)">Pause</button>
-            <button class="local-ai-api-cockpit-button" type="button" @click="action('resume_autonomous_run', {task_id: workspace.task_id})">Resume</button>
-            <button class="local-ai-api-cockpit-button" type="button" @click="stop(workspace.task_id)">Stop</button>
-            <button class="local-ai-api-cockpit-button" type="button" @click="action('archive_workspace', {task_id: workspace.task_id})">Archive</button>
+            <template x-if="workspace.state === 'active' && workspace.run_state === 'not_started'">
+              <button class="local-ai-api-cockpit-button primary" type="button" @click="action('start_autonomous_run', {task_id: workspace.task_id})">Start</button>
+            </template>
+            <template x-if="workspace.state !== 'archived' && workspace.run_state !== 'evaluating'">
+              <button class="local-ai-api-cockpit-button" type="button" @click="action('preview_workspace', {task_id: workspace.task_id})">Preview</button>
+            </template>
+            <template x-if="workspace.run_state === 'running'">
+              <button class="local-ai-api-cockpit-button" type="button" @click="action('evaluate_workspace', {task_id: workspace.task_id})">Evaluate</button>
+            </template>
+            <template x-if="workspace.run_state === 'running'">
+              <button class="local-ai-api-cockpit-button" type="button" @click="pause(workspace.task_id)">Pause</button>
+            </template>
+            <template x-if="workspace.run_state === 'paused'">
+              <button class="local-ai-api-cockpit-button primary" type="button" @click="action('resume_autonomous_run', {task_id: workspace.task_id})">Resume</button>
+            </template>
+            <template x-if="workspace.run_state === 'running' || workspace.run_state === 'paused'">
+              <button class="local-ai-api-cockpit-button" type="button" @click="stop(workspace.task_id)">Stop</button>
+            </template>
+            <template x-if="workspace.state !== 'archived' && (workspace.run_state === 'review_ready' || workspace.run_state === 'stopped')">
+              <button class="local-ai-api-cockpit-button" type="button" title="Ask for confirmation before archiving this workspace." @click="archive(workspace.task_id)">Archive…</button>
+            </template>
           </div>
         </article>
       </template>

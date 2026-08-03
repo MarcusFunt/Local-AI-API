@@ -57,7 +57,10 @@ class TestStatusPage:
 
 
 class TestStatusJson:
-    async def test_reports_all_profiles_ready(self, client: httpx.AsyncClient):
+    async def test_reports_all_profiles_ready(self, client: httpx.AsyncClient, monkeypatch):
+        from gateway.routes import status as status_module
+
+        monkeypatch.setattr(status_module, "_last_update_run", lambda: None)
         with respx.mock(base_url=OLLAMA_BASE) as mock:
             mock.get("/api/tags").mock(
                 return_value=httpx.Response(
@@ -262,12 +265,11 @@ async def test_last_update_run_reads_marker_and_tolerates_missing():
 
     marker = Path(status_module.__file__).resolve().parents[2] / ".local" / "last-update.json"
     existed = marker.exists()
-    backup = marker.read_text(encoding="utf-8") if existed else None
+    backup = marker.read_bytes() if existed else None
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(
-            '{"status": "failed", "scheduled": true, "finished_at": "2026-01-01T00:00:00Z"}',
-            encoding="utf-8",
+        marker.write_bytes(
+            b'\xef\xbb\xbf{"status": "failed", "scheduled": true, "finished_at": "2026-01-01T00:00:00Z"}'
         )
         assert status_module._last_update_run() == {
             "status": "failed",
@@ -279,6 +281,28 @@ async def test_last_update_run_reads_marker_and_tolerates_missing():
         assert status_module._last_update_run() is None
     finally:
         if existed and backup is not None:
-            marker.write_text(backup, encoding="utf-8")
+            marker.write_bytes(backup)
         elif marker.exists():
             marker.unlink()
+
+
+async def test_failed_scheduled_update_degrades_the_status_payload(monkeypatch):
+    from gateway.routes import status as status_module
+
+    async def healthy_ollama():
+        return {"status": "ok"}, []
+
+    async def repository_status():
+        return {"status": "idle", "available": True, "update_owner": "installer_schedule"}
+
+    failed_update = {"status": "failed", "scheduled": True, "error": "scheduled update refused dirty checkout"}
+    monkeypatch.setattr(status_module, "_fetch_ollama_tags", healthy_ollama)
+    monkeypatch.setattr(status_module, "_profile_statuses", lambda _models: [])
+    monkeypatch.setattr(status_module, "get_repo_update_status", repository_status)
+    monkeypatch.setattr(status_module, "_last_update_run", lambda: failed_update)
+
+    payload = await status_module._build_status_payload()
+
+    assert payload["status"] == "degraded"
+    assert payload["last_update_run"] == failed_update
+    assert payload["repository"]["last_update"] == failed_update

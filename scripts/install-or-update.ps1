@@ -87,7 +87,16 @@ function Write-UpdateMarker {
         if (-not [string]::IsNullOrWhiteSpace($ErrorMessage)) {
             $marker.error = $ErrorMessage
         }
-        ($marker | ConvertTo-Json -Compress) | Set-Content -LiteralPath (Join-Path $localDir "last-update.json") -Encoding UTF8
+        # Windows PowerShell 5.1's UTF8 encoding writes a BOM, which strict
+        # JSON readers reject.  Use the shared .NET encoder to keep markers
+        # portable and readable by the gateway on every host.
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        $markerJson = $marker | ConvertTo-Json -Compress
+        [System.IO.File]::WriteAllText(
+            (Join-Path $localDir "last-update.json"),
+            ($markerJson + [Environment]::NewLine),
+            $utf8NoBom
+        )
     }
     catch {
         Write-Log "Could not write update marker: $($_.Exception.Message)"
@@ -477,8 +486,29 @@ function Build-And-TestGatewayImage {
     )
 }
 
+function Remove-LegacyRepoUpdater {
+    $containerIds = @(
+        & docker ps -aq `
+            --filter "label=com.docker.compose.project=local-ai-api" `
+            --filter "label=com.docker.compose.service=repo-updater" |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "Could not inspect legacy Docker updater containers; leaving them unchanged."
+        return
+    }
+    if ($containerIds.Count -eq 0) {
+        return
+    }
+
+    Write-Log "Removing obsolete Docker repository updater container(s); updates now run only through the host installer schedule."
+    Invoke-Docker -Arguments (@("rm", "-f") + $containerIds)
+}
+
 function Start-Stack {
     param([Parameter(Mandatory = $true)][string[]]$ComposeArguments)
+
+    Remove-LegacyRepoUpdater
 
     Write-Log "Starting Ollama."
     Invoke-DockerCompose -ComposeArguments $ComposeArguments -CommandArguments @("up", "-d", "ollama")

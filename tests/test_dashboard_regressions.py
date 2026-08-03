@@ -16,6 +16,11 @@ def test_status_dashboard_hides_empty_badges_and_explains_runtime_scope() -> Non
     assert '"Gateway listener"' in source
     assert 'statusLabel: "Endpoints available"' in source
     assert "not reported" not in source
+    assert 'class="tab-scroll-cue"' in source
+    assert 'class="table-scroll-cue"' in source
+    assert "Swipe to see the remaining dashboard sections" in source
+    assert "Swipe the table to view every column" in source
+    assert 'if (repoStatus === "failed") return ["degraded", "Maintenance failure"]' in source
 
 
 def test_live_call_has_a_clear_empty_transcript_and_a_form_owned_api_key() -> None:
@@ -45,3 +50,11 @@ def test_cockpit_is_reactive_and_can_open_as_a_native_surface_modal() -> None:
     assert 'modalPath: "/plugins/local_ai_api_cockpit/webui/cockpit.html"' in registration
     assert "arguments =" not in frontend
     assert "arguments: params" in frontend
+    assert "function mountStandaloneCockpit()" in frontend
+    assert 'this.call("autonomous_status"' in frontend
+    assert "async archive(taskId)" in frontend
+    assert "data-cockpit-action" in frontend
+    assert "workspace.run_state === 'running'" in modal
+    assert "workspace.run_state === 'paused'" in modal
+    assert "workspace.run_state === 'review_ready'" in modal
+    assert "x-show=\"!embedded\"" in modal

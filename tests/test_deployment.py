@@ -142,6 +142,19 @@ def test_compose_has_no_docker_side_repo_update_monitor():
     assert "repo-updater" not in config["services"]
 
 
+def test_installers_remove_only_the_obsolete_docker_updater_service():
+    shell = (REPO_ROOT / "scripts" / "install-or-update.sh").read_text(encoding="utf-8")
+    powershell = (REPO_ROOT / "scripts" / "install-or-update.ps1").read_text(encoding="utf-8")
+
+    for source in (shell, powershell):
+        assert "com.docker.compose.project=local-ai-api" in source
+        assert "com.docker.compose.service=repo-updater" in source
+        assert "docker rm -f /" not in source
+    assert "remove_legacy_repo_updater" in shell
+    assert "Remove-LegacyRepoUpdater" in powershell
+    assert "UTF8Encoding($false)" in powershell
+
+
 def test_external_runtime_images_are_digest_pinned():
     compose = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
     qdrant = (REPO_ROOT / "compose.qdrant.yaml").read_text(encoding="utf-8")

@@ -215,7 +215,10 @@ def _last_update_run() -> dict[str, Any] | None:
     run so a silently-failed auto-update is visible on the status page."""
     marker = Path(__file__).resolve().parents[2] / ".local" / "last-update.json"
     try:
-        data = json.loads(marker.read_text(encoding="utf-8"))
+        # Windows PowerShell 5.1 historically wrote UTF-8 with a BOM.  Accept
+        # that legacy marker as well as the BOM-free JSON written by current
+        # installers so a failed scheduled run cannot disappear from status.
+        data = json.loads(marker.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
@@ -235,8 +238,11 @@ async def _build_status_payload() -> dict[str, Any]:
     ollama, ollama_models = await _fetch_ollama_tags()
     profiles = _profile_statuses(ollama_models)
     repository = await get_repo_update_status()
+    last_update_run = _last_update_run()
+    repository["last_update"] = last_update_run
     missing_profiles = [profile for profile in profiles if profile["status"] != "ready"]
-    overall_status = "ok" if ollama["status"] == "ok" and not missing_profiles else "degraded"
+    update_failed = last_update_run is not None and last_update_run.get("status") == "failed"
+    overall_status = "ok" if ollama["status"] == "ok" and not missing_profiles and not update_failed else "degraded"
 
     return {
         "status": overall_status,
@@ -247,7 +253,7 @@ async def _build_status_payload() -> dict[str, Any]:
         "repository": repository,
         "last_dev_check": _LAST_DEV_CHECK,
         "autonomy": _autonomy_status(),
-        "last_update_run": _last_update_run(),
+        "last_update_run": last_update_run,
         "agent_zero_candidate": _agent_zero_candidate_status(),
     }
 
