@@ -199,6 +199,10 @@ sync_repo_to_github() {
     if [[ -n "$(git -C "${root}" status --porcelain)" ]]; then
       die "Scheduled updates refuse a dirty checkout; resolve or commit local changes first."
     fi
+    current_branch="$(git -C "${root}" branch --show-current)"
+    if [[ "${current_branch}" != "${REMOTE_BRANCH}" ]]; then
+      die "Scheduled updates require the approved ${REMOTE_BRANCH} branch (current: ${current_branch:-detached})."
+    fi
     if ! git -C "${root}" merge-base --is-ancestor HEAD "${REMOTE_NAME}/${REMOTE_BRANCH}"; then
       die "Scheduled updates require a fast-forward path to ${REMOTE_NAME}/${REMOTE_BRANCH}."
     fi
@@ -389,7 +393,7 @@ build_and_test_gateway_image() {
   docker_cmd run --rm \
     --entrypoint python \
     --workdir /app \
-    local-ai-api-gateway:latest \
+    local-ai-api-gateway:1.0.0 \
     -m pytest tests -v
 }
 

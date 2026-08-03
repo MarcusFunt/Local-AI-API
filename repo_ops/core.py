@@ -8,8 +8,9 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tarfile
+import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,18 +53,22 @@ class RepoOpsConfig:
     workspace_ttl_days: int = 7
     archive_ttl_days: int = 14
     autonomy_max_storage_gib: int = 20
+    autonomy_enabled: bool = False
+    jobs_root: Path | None = None
 
     @classmethod
     def from_environment(cls) -> "RepoOpsConfig":
         return cls(
             source_root=Path(os.environ.get("REPO_OPS_SOURCE_ROOT", "/source")),
             workspaces_root=Path(os.environ.get("REPO_OPS_WORKSPACES_ROOT", "/workspaces")),
+            jobs_root=Path(os.environ["REPO_OPS_JOBS_ROOT"]) if os.environ.get("REPO_OPS_JOBS_ROOT") else None,
             gitnexus_repo=os.environ.get("REPO_OPS_GITNEXUS_REPO", "source"),
             archive_root=Path(os.environ["REPO_OPS_ARCHIVE_ROOT"]) if os.environ.get("REPO_OPS_ARCHIVE_ROOT") else None,
             lease_hours=int(os.environ.get("REPO_OPS_ACTIVE_LEASE_HOURS", "24")),
             workspace_ttl_days=int(os.environ.get("REPO_OPS_WORKSPACE_TTL_DAYS", "7")),
             archive_ttl_days=int(os.environ.get("REPO_OPS_ARCHIVE_TTL_DAYS", "14")),
             autonomy_max_storage_gib=min(20, max(1, int(os.environ.get("REPO_OPS_AUTONOMY_MAX_STORAGE_GIB", "20")))),
+            autonomy_enabled=os.environ.get("REPO_OPS_AUTONOMY_ENABLED", "false").strip().lower() == "true",
         )
 
 
@@ -81,6 +86,8 @@ class RepoOpsManager:
         self._autonomy_root.mkdir(parents=True, exist_ok=True)
         self._preview_jobs_root.mkdir(parents=True, exist_ok=True)
         self._preview_results_root.mkdir(parents=True, exist_ok=True)
+        self._verification_jobs_root.mkdir(parents=True, exist_ok=True)
+        self._verification_results_root.mkdir(parents=True, exist_ok=True)
 
     @property
     def _lifecycle_root(self) -> Path:
@@ -95,12 +102,24 @@ class RepoOpsManager:
         return self.config.workspaces_root / ".autonomy"
 
     @property
+    def _jobs_root(self) -> Path:
+        return self.config.jobs_root or self.config.workspaces_root / ".jobs"
+
+    @property
     def _preview_jobs_root(self) -> Path:
-        return self.config.workspaces_root / ".preview-jobs"
+        return self._jobs_root / "preview-jobs"
 
     @property
     def _preview_results_root(self) -> Path:
-        return self.config.workspaces_root / ".preview-results"
+        return self._jobs_root / "preview-results"
+
+    @property
+    def _verification_jobs_root(self) -> Path:
+        return self._jobs_root / "verification-jobs"
+
+    @property
+    def _verification_results_root(self) -> Path:
+        return self._jobs_root / "verification-results"
 
     @staticmethod
     def _now() -> datetime:
@@ -543,52 +562,64 @@ class RepoOpsManager:
         log_path = self._experiment_log(task_id)
         return json.loads(log_path.read_text(encoding="utf-8")) if log_path.exists() else []
 
-    def _check_command(self, workspace: Path, preset: str) -> list[str]:
+    @staticmethod
+    def _require_check_preset(preset: str) -> str:
         if preset not in _ALLOWED_CHECKS:
             raise RepoOpsError(
                 "Unknown check preset. Allowed: unit, compile, compose_config, "
                 "status_ui_tests, repo_ops_tests, dependency_health."
             )
-        if preset == "unit":
-            return [self._verification_python(), "-m", "pytest", "tests/", "-v", "--cov=gateway"]
-        if preset == "compile":
-            return [self._verification_python(), "-m", "compileall", "gateway"]
-        if preset == "compose_config":
-            return ["docker-compose", "-f", "compose.yaml", "-f", "compose.agent-zero.yaml", "config"]
-        if preset == "status_ui_tests":
-            return [self._verification_python(), "-m", "pytest", "tests/test_status_ui.py", "-v"]
-        if preset == "repo_ops_tests":
-            return [self._verification_python(), "-m", "pytest", "tests/test_repo_ops.py", "tests/test_repo_ops_deployment.py", "-v"]
-        if preset == "dependency_health":
-            return [self._verification_python(), "-m", "pip", "check"]
-        raise RepoOpsError("Unknown check preset.")
+        return preset
 
     def capture_ui(self, task_id: str) -> dict[str, Any]:
         """Queue a workspace-only UI audit; the preview worker has no network access."""
         return self.preview_workspace(task_id)
 
-    @staticmethod
-    def _verification_python() -> str:
-        """Use the repository-pinned environment when the worker runs in Docker."""
-        return os.environ.get("REPO_OPS_VERIFICATION_PYTHON", sys.executable)
-
     def run_check(self, task_id: str, preset: str) -> dict[str, Any]:
-        """Run one named verification command, never arbitrary agent input."""
+        """Queue a named check for the unnetworked, resource-limited worker."""
         workspace = self._workspace(task_id)
         if not workspace.is_dir():
             raise RepoOpsError("Workspace does not exist.")
-        command = self._check_command(workspace, preset)
-        result = self._command(command, cwd=workspace, timeout=600)
-        payload = {
-            "preset": preset,
-            "passed": result.returncode == 0,
-            "returncode": result.returncode,
-            "output": self._output(result),
-            "recorded_at": self._timestamp(),
-        }
+        preset = self._require_check_preset(preset)
+        job_id = uuid.uuid4().hex
+        job_path = self._verification_jobs_root / f"{job_id}.json"
+        result_path = self._verification_results_root / f"{job_id}.json"
+        job = {"job_id": job_id, "task_id": task_id, "preset": preset, "requested_at": self._timestamp()}
+        temporary = job_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(job) + "\n", encoding="utf-8")
+        temporary.replace(job_path)
+
+        deadline = time.monotonic() + 600
+        while time.monotonic() < deadline:
+            if result_path.is_file():
+                try:
+                    payload = json.loads(result_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    raise RepoOpsError("Verification worker returned unreadable evidence.") from exc
+                result_path.unlink(missing_ok=True)
+                if (
+                    not isinstance(payload, dict)
+                    or payload.get("job_id") != job_id
+                    or payload.get("task_id") != task_id
+                    or payload.get("preset") != preset
+                    or not isinstance(payload.get("passed"), bool)
+                    or not isinstance(payload.get("returncode"), int)
+                    or not isinstance(payload.get("output"), str)
+                ):
+                    raise RepoOpsError("Verification worker returned invalid evidence.")
+                payload["output"] = payload["output"][-_MAX_OUTPUT_CHARS:]
+                payload["recorded_at"] = self._timestamp()
+                break
+            time.sleep(0.1)
+        else:
+            raise RepoOpsError("Verification worker did not finish before the 600 second limit.")
         self._record_check(task_id, payload)
         self._touch_activity(task_id)
         return payload
+
+    def _require_autonomy_enabled(self) -> None:
+        if not self.config.autonomy_enabled:
+            raise RepoOpsError("Autonomous runs are disabled by REPO_OPS_AUTONOMY_ENABLED.")
 
     def _workspace_bytes(self, task_id: str) -> int:
         roots = (self._workspace(task_id), self._artifacts_root(task_id))
@@ -613,6 +644,7 @@ class RepoOpsManager:
 
     def start_autonomous_run(self, task_id: str, evaluation_id: str = "core-contracts", policy: dict[str, Any] | None = None) -> dict[str, Any]:
         """Start a bounded run; the caller still has only existing safe MCP tools."""
+        self._require_autonomy_enabled()
         if not self._workspace(task_id).is_dir():
             raise RepoOpsError("Workspace does not exist.")
         self._evaluation_definition(evaluation_id)
@@ -657,6 +689,7 @@ class RepoOpsManager:
         return True
 
     def autonomous_status(self, task_id: str) -> dict[str, Any]:
+        self._require_autonomy_enabled()
         payload = self._load_autonomy(task_id)
         if payload["state"] not in TERMINAL_STATES:
             self._apply_autonomy_budget(task_id, payload)
@@ -674,6 +707,7 @@ class RepoOpsManager:
         return payload
 
     def pause_autonomous_run(self, task_id: str, reason: str) -> dict[str, Any]:
+        self._require_autonomy_enabled()
         if not reason.strip() or len(reason) > 500:
             raise RepoOpsError("Pause reason must contain 1-500 characters.")
         payload = self._load_autonomy(task_id)
@@ -684,6 +718,7 @@ class RepoOpsManager:
         return self.autonomous_status(task_id)
 
     def resume_autonomous_run(self, task_id: str) -> dict[str, Any]:
+        self._require_autonomy_enabled()
         payload = self._load_autonomy(task_id)
         if payload["state"] != "paused":
             raise RepoOpsError("Only a paused autonomous run can resume.")
@@ -692,6 +727,7 @@ class RepoOpsManager:
         return self.autonomous_status(task_id)
 
     def stop_autonomous_run(self, task_id: str, reason: str) -> dict[str, Any]:
+        self._require_autonomy_enabled()
         if not reason.strip() or len(reason) > 500:
             raise RepoOpsError("Stop reason must contain 1-500 characters.")
         payload = self._load_autonomy(task_id)
@@ -702,6 +738,7 @@ class RepoOpsManager:
         return self.autonomous_status(task_id)
 
     def record_autonomous_progress(self, task_id: str, summary: str) -> dict[str, Any]:
+        self._require_autonomy_enabled()
         if not summary.strip() or len(summary) > 2_000:
             raise RepoOpsError("Progress summary must contain 1-2000 characters.")
         payload = self._load_autonomy(task_id)
@@ -714,6 +751,7 @@ class RepoOpsManager:
 
     def evaluate_workspace(self, task_id: str) -> dict[str, Any]:
         """Run only manifest-defined checks and update a monotonic score history."""
+        self._require_autonomy_enabled()
         payload = self._load_autonomy(task_id)
         if payload["state"] not in {"running", "evaluating"}:
             raise RepoOpsError("Only a running autonomous task can be evaluated.")

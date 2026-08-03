@@ -1,1 +1,3 @@
-fastmcp>=2.0
+# FastMCP 3 requires Starlette 1.x, while the gateway's FastAPI version
+# supports Starlette <0.47. Keep the optional MCP surface on FastMCP 2.x.
+fastmcp>=2.0,<3.0

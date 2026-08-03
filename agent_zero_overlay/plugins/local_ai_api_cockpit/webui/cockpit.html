@@ -1,12 +1,258 @@
-<html><head><script type="module" src="/plugins/local_ai_api_cockpit/webui/cockpit.js"></script></head>
-<body><section class="local-ai-api-cockpit" x-data>
-  <header><h2>Disposable workspaces</h2><button type="button" @click="window.localAiApiCockpit.create()">Create</button><button type="button" @click="window.localAiApiCockpit.refresh()">Refresh</button></header>
-  <p>Runs track bounded evidence and checks. They never make edits unless an approved agent separately uses a workspace edit tool.</p>
-  <p x-text="window.localAiApiCockpit.message"></p>
-  <p x-show="window.localAiApiCockpit.candidate" x-text="window.localAiApiCockpit.candidate?.message"></p>
-  <template x-for="workspace in window.localAiApiCockpit.workspaces" :key="workspace.task_id">
-    <article><strong x-text="workspace.task_id"></strong><span x-text="workspace.state"></span><button type="button" @click="window.localAiApiCockpit.inspect(workspace.task_id)">Evidence</button><button type="button" @click="window.localAiApiCockpit.action('start_autonomous_run', {task_id: workspace.task_id})">Start</button><button type="button" @click="window.localAiApiCockpit.action('evaluate_workspace', {task_id: workspace.task_id})">Evaluate</button><button type="button" @click="window.localAiApiCockpit.action('preview_workspace', {task_id: workspace.task_id})">Preview</button><button type="button" @click="window.localAiApiCockpit.pause(workspace.task_id)">Pause</button><button type="button" @click="window.localAiApiCockpit.action('resume_autonomous_run', {task_id: workspace.task_id})">Resume</button><button type="button" @click="window.localAiApiCockpit.stop(workspace.task_id)">Stop</button><button type="button" @click="window.localAiApiCockpit.action('archive_workspace', {task_id: workspace.task_id})">Archive</button></article>
-  </template>
-  <pre x-show="window.localAiApiCockpit.evidence" x-text="window.localAiApiCockpit.evidence"></pre>
-  <p>Review-ready evidence can be inspected here; merging, pushing, and deployment remain unavailable.</p>
-</section></body></html>
+<html
+  class="surface-modal local-ai-api-cockpit-modal modal-no-backdrop"
+  data-surface-id="local-ai-api-cockpit"
+  data-surface-modal-path="/plugins/local_ai_api_cockpit/webui/cockpit.html"
+  data-surface-dock-title="Open Workspaces in canvas"
+  data-surface-dock-icon="dock_to_right"
+  data-canvas-surface="local-ai-api-cockpit"
+  data-canvas-modal-path="/plugins/local_ai_api_cockpit/webui/cockpit.html"
+  data-canvas-dock-title="Open Workspaces in canvas"
+  data-canvas-dock-icon="dock_to_right"
+>
+<head>
+  <title>Disposable workspaces</title>
+  <style>
+    .local-ai-api-cockpit-body {
+      margin: 0;
+      background: #101820;
+      color: #ecf3f7;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .local-ai-api-cockpit {
+      display: grid;
+      gap: 16px;
+      min-height: 100%;
+      padding: 20px;
+      background:
+        radial-gradient(circle at top right, rgba(53, 202, 168, 0.12), transparent 30rem),
+        #101820;
+    }
+
+    .local-ai-api-cockpit *,
+    .local-ai-api-cockpit *::before,
+    .local-ai-api-cockpit *::after {
+      box-sizing: border-box;
+    }
+
+    .local-ai-api-cockpit-header,
+    .local-ai-api-cockpit-toolbar,
+    .local-ai-api-cockpit-workspace-header,
+    .local-ai-api-cockpit-actions {
+      display: flex;
+      align-items: center;
+    }
+
+    .local-ai-api-cockpit-header {
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid rgba(157, 186, 199, 0.2);
+    }
+
+    .local-ai-api-cockpit-eyebrow {
+      margin: 0 0 4px;
+      color: #70d8c4;
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .local-ai-api-cockpit h2 {
+      margin: 0;
+      color: #f4fbfd;
+      font-size: 1.2rem;
+      line-height: 1.2;
+    }
+
+    .local-ai-api-cockpit-copy,
+    .local-ai-api-cockpit-footer {
+      margin: 0;
+      color: #a7bbc5;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    .local-ai-api-cockpit-toolbar,
+    .local-ai-api-cockpit-actions {
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .local-ai-api-cockpit-button {
+      min-height: 34px;
+      padding: 7px 10px;
+      border: 1px solid #46606d;
+      border-radius: 7px;
+      color: #eaf4f7;
+      background: #1c2a33;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.82rem;
+      font-weight: 750;
+    }
+
+    .local-ai-api-cockpit-button:hover,
+    .local-ai-api-cockpit-button:focus-visible {
+      border-color: #75dec9;
+      background: #263b46;
+    }
+
+    .local-ai-api-cockpit-button:focus-visible {
+      outline: 3px solid rgba(117, 222, 201, 0.28);
+      outline-offset: 2px;
+    }
+
+    .local-ai-api-cockpit-button.primary {
+      border-color: #53cdb5;
+      color: #041512;
+      background: #72dec8;
+    }
+
+    .local-ai-api-cockpit-button.primary:hover,
+    .local-ai-api-cockpit-button.primary:focus-visible {
+      background: #9aecd9;
+    }
+
+    .local-ai-api-cockpit-status,
+    .local-ai-api-cockpit-candidate,
+    .local-ai-api-cockpit-empty {
+      margin: 0;
+      padding: 11px 12px;
+      border: 1px solid rgba(102, 143, 156, 0.38);
+      border-radius: 8px;
+      color: #c5d7df;
+      background: rgba(15, 29, 37, 0.86);
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }
+
+    .local-ai-api-cockpit-candidate {
+      border-color: rgba(243, 181, 80, 0.4);
+      color: #f8d99e;
+    }
+
+    .local-ai-api-cockpit-workspaces {
+      display: grid;
+      gap: 10px;
+    }
+
+    .local-ai-api-cockpit-workspace {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid #344b56;
+      border-left: 3px solid #6ecfbf;
+      border-radius: 9px;
+      background: #16232c;
+    }
+
+    .local-ai-api-cockpit-workspace-header {
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .local-ai-api-cockpit-workspace strong {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: #f2f8fa;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.92rem;
+    }
+
+    .local-ai-api-cockpit-state {
+      flex: 0 0 auto;
+      padding: 3px 8px;
+      border: 1px solid rgba(112, 216, 196, 0.42);
+      border-radius: 999px;
+      color: #7ee6d1;
+      background: rgba(112, 216, 196, 0.1);
+      font-size: 0.74rem;
+      font-weight: 800;
+      text-transform: capitalize;
+    }
+
+    .local-ai-api-cockpit-evidence {
+      max-height: 420px;
+      margin: 0;
+      overflow: auto;
+      padding: 13px;
+      border: 1px solid #344b56;
+      border-radius: 8px;
+      color: #d7e7ec;
+      background: #0a1116;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.78rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 640px) {
+      .local-ai-api-cockpit {
+        padding: 14px;
+      }
+
+      .local-ai-api-cockpit-header,
+      .local-ai-api-cockpit-workspace-header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .local-ai-api-cockpit-toolbar,
+      .local-ai-api-cockpit-actions {
+        width: 100%;
+      }
+
+      .local-ai-api-cockpit-button {
+        flex: 1 1 8rem;
+      }
+    }
+  </style>
+  <script type="module" src="/plugins/local_ai_api_cockpit/webui/cockpit.js"></script>
+</head>
+<body class="local-ai-api-cockpit-body">
+  <section class="local-ai-api-cockpit" x-data="window.localAiApiCockpitView()" x-init="connect()" x-destroy="dispose()">
+    <header class="local-ai-api-cockpit-header">
+      <div>
+        <p class="local-ai-api-cockpit-eyebrow">Local-only operations</p>
+        <h2>Disposable workspaces</h2>
+      </div>
+      <div class="local-ai-api-cockpit-toolbar" aria-label="Workspace controls">
+        <button class="local-ai-api-cockpit-button primary" type="button" @click="create()">Create workspace</button>
+        <button class="local-ai-api-cockpit-button" type="button" @click="refresh()">Refresh</button>
+      </div>
+    </header>
+
+    <p class="local-ai-api-cockpit-copy">Runs collect bounded evidence and checks. They never make edits unless an approved agent separately uses a workspace edit tool.</p>
+    <p class="local-ai-api-cockpit-status" role="status" x-text="message"></p>
+    <p class="local-ai-api-cockpit-candidate" x-show="candidate" x-text="candidate?.message"></p>
+
+    <section class="local-ai-api-cockpit-workspaces" aria-label="Disposable workspaces">
+      <template x-for="workspace in workspaces" :key="workspace.task_id">
+        <article class="local-ai-api-cockpit-workspace">
+          <div class="local-ai-api-cockpit-workspace-header">
+            <strong x-text="workspace.task_id"></strong>
+            <span class="local-ai-api-cockpit-state" x-text="workspace.state"></span>
+          </div>
+          <div class="local-ai-api-cockpit-actions" aria-label="Workspace actions">
+            <button class="local-ai-api-cockpit-button" type="button" @click="inspect(workspace.task_id)">Evidence</button>
+            <button class="local-ai-api-cockpit-button primary" type="button" @click="action('start_autonomous_run', {task_id: workspace.task_id})">Start</button>
+            <button class="local-ai-api-cockpit-button" type="button" @click="action('evaluate_workspace', {task_id: workspace.task_id})">Evaluate</button>
+            <button class="local-ai-api-cockpit-button" type="button" @click="action('preview_workspace', {task_id: workspace.task_id})">Preview</button>
+            <button class="local-ai-api-cockpit-button" type="button" @click="pause(workspace.task_id)">Pause</button>
+            <button class="local-ai-api-cockpit-button" type="button" @click="action('resume_autonomous_run', {task_id: workspace.task_id})">Resume</button>
+            <button class="local-ai-api-cockpit-button" type="button" @click="stop(workspace.task_id)">Stop</button>
+            <button class="local-ai-api-cockpit-button" type="button" @click="action('archive_workspace', {task_id: workspace.task_id})">Archive</button>
+          </div>
+        </article>
+      </template>
+      <p class="local-ai-api-cockpit-empty" x-show="workspaces.length === 0">No disposable workspaces exist yet. Create one only when you need bounded, reviewable work.</p>
+    </section>
+
+    <pre class="local-ai-api-cockpit-evidence" x-show="evidence" x-text="evidence"></pre>
+    <p class="local-ai-api-cockpit-footer">Review-ready evidence can be inspected here; merging, pushing, and deployment remain unavailable.</p>
+  </section>
+</body>
+</html>

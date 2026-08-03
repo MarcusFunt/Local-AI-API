@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23090b0f'/%3E%3Cpath d='M8 10h16v12H8z' fill='none' stroke='%2327e0bd' stroke-width='3'/%3E%3Cpath d='M12 14h8M12 18h5' stroke='%2327e0bd' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
   <title>Local AI API Status</title>
   <style>
     :root {
@@ -259,6 +260,10 @@
       font-weight: 850;
     }
 
+    .tab-badge[hidden] {
+      display: none !important;
+    }
+
     main {
       max-width: 1480px;
       margin: 0 auto;
@@ -314,6 +319,10 @@
 
     .metric[data-state="neutral"] {
       border-top-color: var(--neutral);
+    }
+
+    .metric.runtime-summary {
+      grid-column: span 3;
     }
 
     .metric-header,
@@ -684,6 +693,10 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
 
+      .metric.runtime-summary {
+        grid-column: span 2;
+      }
+
       .content-grid {
         grid-template-columns: 1fr;
       }
@@ -746,7 +759,8 @@
       }
 
       .span-2,
-      .span-3 {
+      .span-3,
+      .metric.runtime-summary {
         grid-column: auto;
       }
 
@@ -1055,9 +1069,9 @@
       return `<button class="metric-link" type="button" data-open-tab="${escapeHtml(tab)}">${escapeHtml(label)}</button>`;
     }
 
-    function metric({ title, status, statusLabel, value, rows = [], bodyHtml = "", footerHtml = "" }) {
+    function metric({ title, status, statusLabel, value, rows = [], bodyHtml = "", footerHtml = "", className = "" }) {
       return `
-        <article class="metric" data-state="${statusKind(status)}">
+        <article class="metric ${className}" data-state="${statusKind(status)}">
           <div class="metric-header">
             <h2>${escapeHtml(title)}</h2>
             ${pill(status, statusLabel ?? titleCase(status))}
@@ -1172,7 +1186,7 @@
           status: gateway.status ?? "unknown",
           statusLabel: gateway.status === "ok" ? "Ok" : titleCase(gateway.status),
           rows: [
-            ["Listen", `${gateway.host ?? "--"}:${gateway.port ?? "--"}`],
+            ["Gateway listener", `${gateway.host ?? "--"}:${gateway.port ?? "--"}`],
             ["OpenAI compatible", "yes"],
             ["Uptime", fmtDuration(gateway.uptime_seconds)],
             ["Request timeout", `${gateway.request_timeout_seconds ?? "--"}s`],
@@ -1245,6 +1259,7 @@
         }),
         metric({
           title: "Runtime",
+          className: "runtime-summary",
           status: "idle",
           statusLabel: "Config",
           rows: [
@@ -1353,11 +1368,11 @@
       const gateway = data.gateway ?? {};
       els.runtimeState.innerHTML = [
         panelBlock({
-          title: "Host & network",
+          title: "Gateway process",
           rows: [
             ["Hostname", gateway.hostname],
-            ["Listen host", gateway.host],
-            ["Listen port", gateway.port],
+            ["Process host", gateway.host],
+            ["Process port", gateway.port],
             ["Platform", gateway.platform],
             ["Python version", gateway.python],
           ],
@@ -1389,33 +1404,36 @@
     function renderAudio(data) {
       const gateway = data.gateway ?? {};
       const whisperDefault = gateway.default_whisper_model ?? "none";
-      const transcriptionState = whisperDefault === "none" ? "disabled by default" : "enabled";
-      const whisperStatus = whisperDefault === "none" ? "disabled" : "ready";
+      const transcriptionState = whisperDefault === "none" ? "select a model per request" : "used when omitted";
+      const whisperStatus = whisperDefault === "none" ? "idle" : "ready";
       els.audioState.innerHTML = [
         panelBlock({
           title: "Whisper (STT)",
           status: whisperStatus,
-          statusLabel: whisperDefault === "none" ? "Disabled" : "Ready",
+          statusLabel: whisperDefault === "none" ? "Default disabled" : "Default active",
           rows: [
             ["Default model", whisperDefault],
-            ["Status", transcriptionState],
+            ["When omitted", transcriptionState],
           ],
         }),
         panelBlock({
           title: "Chatterbox (TTS)",
-          status: "ready",
-          statusLabel: "Ready",
+          status: "idle",
+          statusLabel: "On demand",
           rows: [
-            ["Model", gateway.chatterbox_model],
-            ["Status", "enabled"],
+            ["Configured model", gateway.chatterbox_model],
+            ["Model loading", "on first request"],
           ],
         }),
         panelBlock({
           title: "Audio subsystem",
           span: "span-2",
+          status: "idle",
+          statusLabel: "Endpoints available",
           rows: [
-            ["Audio enabled", data.audio?.enabled === undefined ? "not reported" : boolText(data.audio.enabled)],
-            ["Runtime state", data.audio?.status ?? "not reported"],
+            ["Transcription", "available with an allowed Whisper model"],
+            ["Speech", "available with the configured Chatterbox model"],
+            ["Runtime state", "models load on demand"],
           ],
         }),
       ].join("");
@@ -1431,7 +1449,7 @@
           rows: [
             ["Service", gateway.service],
             ["Ollama base URL", data.ollama?.base_url],
-            ["Listen", `${gateway.host ?? "--"}:${gateway.port ?? "--"}`],
+            ["Gateway listener", `${gateway.host ?? "--"}:${gateway.port ?? "--"}`],
             ["OpenAI compatible", "true"],
           ],
         }),

@@ -13,6 +13,7 @@ from fastapi import HTTPException
 
 from .config import Settings
 from .models import (
+    MAX_CHAT_TEXT_CHARS,
     ChatCompletionChunk,
     ChatCompletionChunkChoice,
     ChatCompletionChunkDelta,
@@ -20,6 +21,7 @@ from .models import (
     ChatCompletionResponse,
     ChatCompletionUsage,
     ChatMessage,
+    validate_base64_image_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,40 +52,53 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
-def _image_data_from_url(value: Any) -> str | None:
-    if isinstance(value, dict):
-        url = value.get("url")
-    else:
-        url = value
-    if not isinstance(url, str):
-        return None
-    if url.startswith("data:") and ";base64," in url:
-        return url.split(",", 1)[1]
-    return None
+def _invalid_content_exception(message: str) -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail={
+            "error": {
+                "message": message,
+                "type": "invalid_request_error",
+                "code": "invalid_chat_content",
+            }
+        },
+    )
+
+
+def _image_data_from_url(value: Any) -> str:
+    try:
+        return validate_base64_image_url(value)
+    except ValueError as exc:
+        raise _invalid_content_exception(str(exc)) from exc
 
 
 def _content_for_ollama(content: Any) -> tuple[str, list[str]]:
     if content is None:
         return "", []
     if isinstance(content, str):
+        if len(content) > MAX_CHAT_TEXT_CHARS:
+            raise _invalid_content_exception(f"Chat message content must not exceed {MAX_CHAT_TEXT_CHARS} characters.")
         return content, []
     if not isinstance(content, list):
-        return str(content), []
+        raise _invalid_content_exception("Chat message content must be text or a supported content-part list.")
 
     text_parts: list[str] = []
     images: list[str] = []
     for part in content:
         if not isinstance(part, dict):
-            continue
+            raise _invalid_content_exception("Each content part must be an object.")
         part_type = part.get("type")
         if part_type == "text":
-            text_parts.append(str(part.get("text", "")))
+            text = part.get("text")
+            if not isinstance(text, str):
+                raise _invalid_content_exception("Text content parts must include text.")
+            if len(text) > MAX_CHAT_TEXT_CHARS:
+                raise _invalid_content_exception(f"Text content parts must not exceed {MAX_CHAT_TEXT_CHARS} characters.")
+            text_parts.append(text)
         elif part_type == "image_url":
-            image_data = _image_data_from_url(part.get("image_url"))
-            if image_data:
-                images.append(image_data)
-        elif isinstance(part.get("text"), str):
-            text_parts.append(part["text"])
+            images.append(_image_data_from_url(part.get("image_url")))
+        else:
+            raise _invalid_content_exception("Unsupported content part type.")
 
     return "\n".join(text for text in text_parts if text), images
 
@@ -292,6 +307,9 @@ async def proxy_non_streaming(
     except ValueError as exc:
         logger.warning("Ollama returned invalid JSON: %s", exc)
         raise _ollama_invalid_response_exception("Ollama returned invalid JSON.") from exc
+    if not isinstance(data, dict):
+        logger.warning("Ollama returned a non-object JSON response: %s", type(data).__name__)
+        raise _ollama_invalid_response_exception("Ollama returned a JSON response that was not an object.")
     msg = data.get("message", {})
     msg = msg if isinstance(msg, dict) else {}
     prompt_tokens = data.get("prompt_eval_count", 0) or 0
@@ -420,22 +438,64 @@ async def proxy_streaming_events(
             await stream_context.__aexit__(None, None, None)
         raise
 
+    line_iterator = response.aiter_lines()
+    try:
+        while True:
+            raw_line = (await anext(line_iterator)).strip()
+            if not raw_line:
+                continue
+            try:
+                first_chunk = json.loads(raw_line)
+            except json.JSONDecodeError as exc:
+                raise _ollama_invalid_response_exception("Ollama stream returned invalid JSON.") from exc
+            if not isinstance(first_chunk, dict):
+                raise _ollama_invalid_response_exception(
+                    "Ollama stream returned a JSON value that was not an object."
+                )
+            break
+    except StopAsyncIteration as exc:
+        await stream_context.__aexit__(None, None, None)
+        raise _ollama_invalid_response_exception("Ollama stream ended before returning a response.") from exc
+    except httpx.TimeoutException as exc:
+        await stream_context.__aexit__(None, None, None)
+        raise _ollama_timeout_exception("Request to Ollama timed out.") from exc
+    except Exception:
+        await stream_context.__aexit__(None, None, None)
+        raise
+
     async def generate() -> AsyncGenerator[dict[str, Any], None]:
         try:
             # First chunk carries the role
             yield {"type": "delta", "delta": {"role": "assistant"}}
 
             completed = False
-            async for raw_line in response.aiter_lines():
-                raw_line = raw_line.strip()
-                if not raw_line:
-                    continue
-
-                try:
-                    ollama_chunk = json.loads(raw_line)
-                except json.JSONDecodeError:
-                    logger.warning("Unparseable Ollama stream line: %r", raw_line)
-                    continue
+            pending_chunks = [first_chunk]
+            while pending_chunks or not completed:
+                if pending_chunks:
+                    ollama_chunk = pending_chunks.pop()
+                else:
+                    try:
+                        raw_line = (await anext(line_iterator)).strip()
+                    except StopAsyncIteration:
+                        break
+                    if not raw_line:
+                        continue
+                    try:
+                        ollama_chunk = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        logger.warning("Unparseable Ollama stream line: %r", raw_line)
+                        continue
+                    if not isinstance(ollama_chunk, dict):
+                        logger.warning("Ollama stream line was not a JSON object: %r", raw_line)
+                        yield {
+                            "type": "error",
+                            "error": {
+                                "message": "Ollama stream returned a JSON value that was not an object.",
+                                "type": "upstream_error",
+                                "code": "ollama_invalid_response",
+                            },
+                        }
+                        return
 
                 done = ollama_chunk.get("done", False)
                 message = ollama_chunk.get("message", {})

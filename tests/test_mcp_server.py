@@ -29,13 +29,22 @@ from fastmcp.exceptions import ToolError  # noqa: E402
 
 from gateway.mcp_server.server import (  # noqa: E402
     _client,
-    chat,
-    health_check,
-    list_models,
-    search_documents,
-    speak,
-    transcribe,
+    chat as chat_tool,
+    health_check as health_check_tool,
+    list_models as list_models_tool,
+    search_documents as search_documents_tool,
+    speak as speak_tool,
+    transcribe as transcribe_tool,
 )
+
+# FastMCP 2 registers decorated functions as FunctionTool objects. Exercise
+# the original implementation while the MCP transport exercises the wrapper.
+chat = chat_tool.fn
+health_check = health_check_tool.fn
+list_models = list_models_tool.fn
+search_documents = search_documents_tool.fn
+speak = speak_tool.fn
+transcribe = transcribe_tool.fn
 
 
 class TestInternalGatewayClient:

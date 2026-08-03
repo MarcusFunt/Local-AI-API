@@ -99,8 +99,8 @@ The host installer is the only update owner. Its optional systemd timer or
 Windows scheduled task fast-forwards a clean checkout, validates the rebuilt
 gateway image, and records the outcome in `.local/last-update.json`.
 
-Scheduled runs refuse dirty or non-fast-forward checkouts; use an explicit
-manual installer run only when you intend to replace local work.
+Scheduled runs refuse dirty, non-approved-branch, or non-fast-forward checkouts;
+use an explicit manual installer run only when you intend to replace local work.
 
 The status page is read-only and reports the latest installer update marker.
 
@@ -694,7 +694,9 @@ Docker-only variables used by `compose.yaml`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `OLLAMA_IMAGE_TAG` | `latest` | Ollama Docker image tag. |
+| `OLLAMA_IMAGE` | pinned digest | Ollama image reference. Upgrade by changing the tested tag and digest together. |
+| `AUTOHEAL_IMAGE` | pinned digest | Autoheal image reference. |
+| `QDRANT_IMAGE` | pinned digest | Qdrant image reference used by the RAG overlay. |
 | `OLLAMA_KEEP_ALIVE` | `5m` | How long Ollama keeps models loaded after use. |
 | `OLLAMA_MODELS` | `qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b` | Space-separated model tags pulled by the Docker `model-init` service. |
 | `INSTALL_AUDIO` | `true` | Build the gateway image with Whisper and Chatterbox runtime dependencies. Set `false` for chat-only images. |
@@ -707,7 +709,7 @@ Docker-only variables used by `compose.yaml`:
 | `RAG_TOP_K` | `4` | Default number of retrieved chunks. |
 | `RAG_CHUNK_SIZE` | `512` | Target document chunk size. |
 | `RAG_CHUNK_OVERLAP` | `64` | Overlap between consecutive document chunks. |
-| `AGENT_ZERO_IMAGE_TAG` | `latest` | Agent Zero Docker image tag. |
+| `AGENT_ZERO_BASE_IMAGE` | pinned digest | Agent Zero base image used for the local cockpit overlay and skill sandbox. |
 
 In Docker, `compose.yaml` overrides `HOST=0.0.0.0` inside the shared Ollama/gateway network namespace, while the only published host port remains `127.0.0.1:8080`.
 Ollama model files live in the `ollama-data` volume, while gateway-side audio

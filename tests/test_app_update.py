@@ -31,6 +31,24 @@ async def test_repo_update_status_is_read_only(monkeypatch: pytest.MonkeyPatch, 
     assert status["status"] == "idle"
     assert status["update_owner"] == "installer_schedule"
     assert status["head"] == "abc1234"
+    assert status["approved_branch"] == "main"
+    assert status["clean_approved_checkout"] is True
+
+
+async def test_repo_update_status_reports_non_approved_or_dirty_checkout(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    monkeypatch.setenv("REMOTE_BRANCH", "release")
+    monkeypatch.setattr(app_update, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(app_update, "_availability", lambda _root: {"available": True, "root": str(tmp_path)})
+    monkeypatch.setattr(
+        app_update,
+        "_read_git_state",
+        lambda _root: {"branch": "main", "head": "abc1234", "upstream": "origin/main", "dirty": True},
+    )
+
+    status = await app_update.get_repo_update_status()
+
+    assert status["approved_branch"] == "release"
+    assert status["clean_approved_checkout"] is False
 
 
 async def test_repo_update_status_survives_temporary_git_error(monkeypatch: pytest.MonkeyPatch, tmp_path):

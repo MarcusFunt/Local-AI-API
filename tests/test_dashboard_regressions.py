@@ -1,0 +1,47 @@
+"""Regression coverage for issues found during the live dashboard audit."""
+from __future__ import annotations
+
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_status_dashboard_hides_empty_badges_and_explains_runtime_scope() -> None:
+    source = (REPO_ROOT / "gateway" / "static" / "status.html").read_text(encoding="utf-8")
+
+    assert 'rel="icon"' in source
+    assert ".tab-badge[hidden]" in source
+    assert 'className: "runtime-summary"' in source
+    assert '"Gateway listener"' in source
+    assert 'statusLabel: "Endpoints available"' in source
+    assert "not reported" not in source
+
+
+def test_live_call_has_a_clear_empty_transcript_and_a_form_owned_api_key() -> None:
+    source = (REPO_ROOT / "gateway" / "static" / "live-call.html").read_text(encoding="utf-8")
+
+    assert '<form class="settings" id="call-settings">' in source
+    assert "Overrides the gateway default for this call only." in source
+    assert 'id="transcript-empty"' in source
+    assert "document.querySelector('#transcript-empty')?.remove();" in source
+    assert "call-settings').addEventListener('submit'" in source
+
+
+def test_cockpit_is_reactive_and_can_open_as_a_native_surface_modal() -> None:
+    overlay = REPO_ROOT / "agent_zero_overlay" / "plugins" / "local_ai_api_cockpit"
+    frontend = (overlay / "webui" / "cockpit.js").read_text(encoding="utf-8")
+    modal = (overlay / "webui" / "cockpit.html").read_text(encoding="utf-8")
+    registration = (
+        overlay / "extensions" / "webui" / "right_canvas_register_surfaces" / "register-local-ai-api-cockpit.js"
+    ).read_text(encoding="utf-8")
+
+    assert 'const UPDATE_EVENT = "local-ai-api-cockpit:update"' in frontend
+    assert "function cockpitView()" in frontend
+    assert "globalThis.localAiApiCockpitView = cockpitView" in frontend
+    assert 'x-data="window.localAiApiCockpitView()"' in modal
+    assert 'data-surface-id="local-ai-api-cockpit"' in modal
+    assert "local-ai-api-cockpit-button" in modal
+    assert 'modalPath: "/plugins/local_ai_api_cockpit/webui/cockpit.html"' in registration
+    assert "arguments =" not in frontend
+    assert "arguments: params" in frontend

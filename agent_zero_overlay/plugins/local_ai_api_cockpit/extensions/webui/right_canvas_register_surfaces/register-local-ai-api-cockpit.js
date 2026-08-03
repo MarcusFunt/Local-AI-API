@@ -4,6 +4,7 @@ export default async function registerLocalAiApiCockpit(surfaces) {
     title: "Workspaces",
     icon: "developer_board",
     order: 90,
+    modalPath: "/plugins/local_ai_api_cockpit/webui/cockpit.html",
     async open() {
       const panel = document.querySelector('[data-surface-id="local-ai-api-cockpit"]');
       if (!panel) throw new Error("Workspace cockpit panel did not mount.");

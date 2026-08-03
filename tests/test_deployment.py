@@ -47,10 +47,14 @@ def _compose_config(files: list[str], env_overrides: dict[str, str] | None = Non
         "WHISPER_CACHE_DIR",
         "AGENT_ZERO_ENABLED",
         "AGENT_ZERO_PORT",
-        "AGENT_ZERO_IMAGE_TAG",
+        "AGENT_ZERO_BASE_IMAGE",
         "API_KEY",
     ):
         env.pop(key, None)
+    # Compose reads the repository's private .env file independently of this
+    # process environment. Pin the documented default here so tests of default
+    # deployment behavior do not inherit a developer's custom model list.
+    env["OLLAMA_MODELS"] = "qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b"
     if env_overrides:
         env.update(env_overrides)
 
@@ -138,6 +142,18 @@ def test_compose_has_no_docker_side_repo_update_monitor():
     assert "repo-updater" not in config["services"]
 
 
+def test_external_runtime_images_are_digest_pinned():
+    compose = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    qdrant = (REPO_ROOT / "compose.qdrant.yaml").read_text(encoding="utf-8")
+    agent_zero = (REPO_ROOT / "Dockerfile.agent-zero-cockpit").read_text(encoding="utf-8")
+
+    assert "OLLAMA_IMAGE:-ollama/ollama@sha256:" in compose
+    assert "AUTOHEAL_IMAGE:-willfarrell/autoheal@sha256:" in compose
+    assert "QDRANT_IMAGE:-qdrant/qdrant@sha256:" in qdrant
+    assert "AGENT_ZERO_BASE_IMAGE=agent0ai/agent-zero@sha256:" in agent_zero
+    assert "PyYAML==6.0.2" in agent_zero
+
+
 def test_agent_zero_models_are_pulled_with_custom_ollama_models():
     config = _compose_config(COMPOSE_VARIANTS["cpu"], {"OLLAMA_MODELS": "qwen3.5:0.8b"})
     entrypoint = config["services"]["model-init"]["entrypoint"][2]
@@ -195,7 +211,7 @@ def test_agent_zero_compose_publishes_ui_only_on_loopback():
     config = _compose_config(AGENT_ZERO_COMPOSE_FILES)
 
     agent_zero = config["services"]["agent-zero"]
-    assert agent_zero["image"] == "local-ai-api-agent-zero-cockpit:latest"
+    assert agent_zero["image"] == "local-ai-api-agent-zero-cockpit:1.0.0"
     assert agent_zero["build"]["dockerfile"] == "Dockerfile.agent-zero-cockpit"
     assert agent_zero["environment"]["API_KEY_OTHER"] == "unused"
     assert agent_zero["command"][:2] == ["/bin/sh", "-c"]
@@ -289,4 +305,14 @@ def test_audio_requirements_pin_setuptools_below_81():
     assert "setuptools<81" in reqs, (
         "requirements-audio.txt must pin setuptools<81 so pkg_resources stays "
         "importable for resemble-perth / Chatterbox TTS."
+    )
+
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    final_compatibility_pin = 'python -m pip install "setuptools<81"'
+    assert dockerfile.count(final_compatibility_pin) == 1
+    assert dockerfile.index(final_compatibility_pin) > dockerfile.index(
+        "python -m pip install -r requirements-rag.txt"
+    ), (
+        "The Docker image must restore setuptools<81 after optional dependencies, "
+        "which can otherwise replace the audio compatibility pin."
     )

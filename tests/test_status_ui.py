@@ -223,6 +223,29 @@ class TestStatusCheck:
         assert body["response"] == "okay"
         assert body["error"] == "Dev model check expected exactly 'ok'."
 
+    async def test_dev_check_is_rate_limited(self, client: httpx.AsyncClient):
+        import gateway.routes.status as status_module
+
+        status_module._STATUS_CHECK_LAST.clear()
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "message": {"role": "assistant", "content": "ok"},
+                        "prompt_eval_count": 1,
+                        "eval_count": 1,
+                    },
+                )
+            )
+            first = await client.post("/status/check")
+            second = await client.post("/status/check")
+
+        assert first.status_code == 200
+        assert second.status_code == 429
+        assert second.json()["error"]["code"] == "status_check_rate_limited"
+        assert int(second.headers["retry-after"]) >= 1
+
 
 async def test_status_update_endpoint_is_not_available(client: httpx.AsyncClient):
     resp = await client.post("/status/update")

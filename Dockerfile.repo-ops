@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim
+FROM node:24.10.0-bookworm-slim@sha256:b8d2197aff9129d16c801a3e3e1b2a873c4946480f5a310f38056df2268c38d9
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -30,8 +30,10 @@ RUN groupadd --system repoops && \
     useradd --system --gid repoops --home-dir /home/repoops --create-home --shell /usr/sbin/nologin repoops && \
     git config --system --add safe.directory /source && \
     git config --system --add safe.directory /source/.git && \
-    mkdir -p /workspaces /ms-playwright && \
-    chown -R repoops:repoops /app /workspaces /ms-playwright /home/repoops
+    # Docker copies image-directory ownership into newly created named volumes.
+    # Include /jobs so the unprivileged preview worker can initialize its queue.
+    mkdir -p /jobs /workspaces /ms-playwright && \
+    chown -R repoops:repoops /app /jobs /workspaces /ms-playwright /home/repoops
 
 USER repoops
 EXPOSE 8090

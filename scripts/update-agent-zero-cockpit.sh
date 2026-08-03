@@ -3,15 +3,15 @@
 set -eu
 
 root="${REPO_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
-base_tag="${AGENT_ZERO_IMAGE_TAG:-latest}"
+base_image="${AGENT_ZERO_BASE_IMAGE:-agent0ai/agent-zero@sha256:7f8bc5cc77c3ab9fb1216a51dc0ae7f65f0536b3a31dd74b600287818ac140bc}"
 candidate="local-ai-api-agent-zero-cockpit:candidate"
-stable="local-ai-api-agent-zero-cockpit:latest"
+stable="local-ai-api-agent-zero-cockpit:1.0.0"
 report_dir="$root/.local"
 report="$report_dir/agent-zero-candidate.json"
 
 write_report() {
   mkdir -p "$report_dir"
-  REPORT_PATH="$report" REPORT_STATUS="$1" REPORT_MESSAGE="$2" REPORT_TAG="$base_tag" python3 - <<'PY'
+  REPORT_PATH="$report" REPORT_STATUS="$1" REPORT_MESSAGE="$2" REPORT_TAG="$base_image" python3 - <<'PY'
 import json
 import os
 from datetime import UTC, datetime
@@ -28,11 +28,11 @@ with open(os.environ["REPORT_PATH"], "w", encoding="utf-8") as handle:
 PY
 }
 
-if ! docker pull "agent0ai/agent-zero:${base_tag}"; then
-  write_report "failed" "Could not pull the configured Agent Zero image tag."
+if ! docker pull "$base_image"; then
+  write_report "failed" "Could not pull the configured Agent Zero base image."
   exit 1
 fi
-if ! docker build --build-arg "AGENT_ZERO_IMAGE_TAG=${base_tag}" -f "$root/Dockerfile.agent-zero-cockpit" -t "$candidate" "$root"; then
+if ! docker build --build-arg "AGENT_ZERO_BASE_IMAGE=${base_image}" -f "$root/Dockerfile.agent-zero-cockpit" -t "$candidate" "$root"; then
   write_report "failed" "Candidate image build failed."
   exit 1
 fi
@@ -40,6 +40,7 @@ if ! docker run --rm --entrypoint /bin/sh "$candidate" -c '
   test -f /a0/plugins/local_ai_api_cockpit/plugin.yaml &&
   test -f /a0/plugins/local_ai_api_cockpit/api/status.py &&
   test -f /a0/plugins/local_ai_api_cockpit/webui/cockpit.js &&
+  python -c "import yaml" &&
   python -m compileall -q /a0/plugins/local_ai_api_cockpit
 '; then
   write_report "failed" "Candidate overlay smoke test failed."

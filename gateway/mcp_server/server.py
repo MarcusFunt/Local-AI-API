@@ -2,7 +2,8 @@
 FastMCP server mounted inside the Local AI API gateway.
 
 Exposes local models as MCP tools. Mount at /mcp in main.py:
-    app.mount("/mcp", mcp.get_asgi_app())
+    mcp_app = mcp.http_app(path="/")
+    app.mount("/mcp", mcp_app)
 
 Claude Code config (~/.claude/settings.json):
     {
@@ -47,7 +48,7 @@ def _client() -> httpx.AsyncClient:
     if settings.enable_api_key_auth:
         headers["Authorization"] = f"Bearer {settings.api_key}"
     return httpx.AsyncClient(
-        base_url=f"http://127.0.0.1:{settings.port}",
+        base_url=f"http://127.0.0.1:{settings.port}/",
         timeout=_TIMEOUT,
         headers=headers,
     )

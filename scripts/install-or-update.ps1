@@ -312,6 +312,11 @@ function Sync-RepoToGitHub {
         if (-not [string]::IsNullOrWhiteSpace(($dirty -join [Environment]::NewLine))) {
             Stop-Fail "Scheduled updates refuse a dirty checkout; resolve or commit local changes first."
         }
+        $currentBranch = @(& git -C $Root branch --show-current)
+        if ($LASTEXITCODE -ne 0 -or $currentBranch.Count -eq 0 -or $currentBranch[0].Trim() -ne $RemoteBranch) {
+            $displayBranch = if ($currentBranch.Count -gt 0) { $currentBranch[0].Trim() } else { "detached" }
+            Stop-Fail "Scheduled updates require the approved $RemoteBranch branch (current: $displayBranch)."
+        }
         & git -C $Root merge-base --is-ancestor HEAD "$RemoteName/$RemoteBranch"
         if ($LASTEXITCODE -ne 0) {
             Stop-Fail "Scheduled updates require a fast-forward path to $RemoteName/$RemoteBranch."
@@ -467,7 +472,7 @@ function Build-And-TestGatewayImage {
         "run", "--rm",
         "--entrypoint", "python",
         "--workdir", "/app",
-        "local-ai-api-gateway:latest",
+        "local-ai-api-gateway:1.0.0",
         "-m", "pytest", "tests", "-v"
     )
 }

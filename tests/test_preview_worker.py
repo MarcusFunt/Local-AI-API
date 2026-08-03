@@ -40,3 +40,28 @@ def test_preview_worker_runs_audit_with_isolated_runtime_paths(tmp_path, monkeyp
 
     assert result["status"] == "passed"
     assert result["screenshot"] == str(results / f"{task_id}.png")
+
+
+def test_verification_runs_only_from_a_temporary_workspace_copy(tmp_path, monkeypatch):
+    task_id = "verify-check"
+    workspace = tmp_path / task_id
+    workspace.mkdir()
+    (workspace / "gateway").mkdir()
+    (workspace / "gateway" / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    monkeypatch.setattr(worker, "ROOT", tmp_path)
+
+    def fake_run(args, cwd, env, capture_output, text, timeout, check):
+        assert args[-2:] == ["compileall", "gateway"]
+        assert cwd != workspace
+        assert (cwd / "gateway" / "sample.py").read_text(encoding="utf-8") == "value = 1\n"
+        assert env["NO_PROXY"] == "*"
+        assert env["PYTEST_ADDOPTS"] == "-p no:cacheprovider"
+        return type("Result", (), {"returncode": 0, "stdout": "compiled", "stderr": ""})()
+
+    monkeypatch.setattr(worker.subprocess, "run", fake_run)
+    result = worker._run_verification(
+        {"job_id": "job", "task_id": task_id, "preset": "compile"}
+    )
+
+    assert result["passed"] is True
+    assert result["output"] == "compiled"

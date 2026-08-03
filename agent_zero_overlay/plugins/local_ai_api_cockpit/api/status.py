@@ -1,6 +1,7 @@
 """Authenticated Agent Zero proxy for the internal repo-ops MCP surface."""
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -27,6 +28,23 @@ _ALLOWED_TOOLS = {
 _CANDIDATE_STATUS_TOOL = "candidate_status"
 
 
+def _mcp_response_json(response: Any) -> Any:
+    """Decode the JSON-RPC result from either Streamable HTTP representation."""
+    content_type = str(response.headers.get("content-type", "")).lower()
+    if "text/event-stream" not in content_type:
+        return response.json()
+
+    for line in response.text.splitlines():
+        if line.startswith("data:"):
+            return json.loads(line.removeprefix("data:").strip())
+    raise ValueError("MCP response did not contain an SSE data payload.")
+
+
+def _cockpit_enabled() -> bool:
+    """Keep the browser proxy disabled unless the container opts in explicitly."""
+    return os.environ.get("AGENT_ZERO_COCKPIT_ENABLED", "false").strip().lower() == "true"
+
+
 class Status(ApiHandler):
     """POST /api/plugins/local_ai_api_cockpit/status.
 
@@ -36,7 +54,7 @@ class Status(ApiHandler):
     """
 
     async def process(self, input: Input, request: Request) -> Output:
-        if os.environ.get("AGENT_ZERO_COCKPIT_ENABLED", "false").lower() != "true":
+        if not _cockpit_enabled():
             return Response("Workspace cockpit is disabled by local configuration.", 403)
         tool = str(input.get("tool", "list_workspaces"))
         arguments = input.get("arguments", {})
@@ -80,7 +98,7 @@ class Status(ApiHandler):
                 )
                 response = await client.post(endpoint, json=payload, headers=headers)
                 response.raise_for_status()
-            return {"ok": True, "tool": tool, "result": response.json()}
+            return {"ok": True, "tool": tool, "result": _mcp_response_json(response)}
         except (httpx.HTTPError, ValueError) as exc:
             return Response(f"Workspace cockpit request failed: {exc}", 502)
 
