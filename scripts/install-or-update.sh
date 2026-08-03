@@ -397,9 +397,31 @@ build_and_test_gateway_image() {
     -m pytest tests -v
 }
 
+remove_legacy_repo_updater() {
+  local container_ids container_id
+  local -a ids=()
+  if ! container_ids="$(docker_cmd ps -aq \
+    --filter "label=com.docker.compose.project=local-ai-api" \
+    --filter "label=com.docker.compose.service=repo-updater")"; then
+    log "Could not inspect legacy Docker updater containers; leaving them unchanged."
+    return
+  fi
+  if [[ -z "${container_ids}" ]]; then
+    return
+  fi
+
+  log "Removing obsolete Docker repository updater container(s); updates now run only through the host installer schedule."
+  while IFS= read -r container_id; do
+    [[ -n "${container_id}" ]] && ids+=("${container_id}")
+  done <<< "${container_ids}"
+  docker_cmd rm -f "${ids[@]}" >/dev/null
+}
+
 start_stack() {
   shift
   local compose_args=("$@")
+
+  remove_legacy_repo_updater
 
   log "Starting Ollama."
   compose_cmd "${compose_args[@]}" up -d ollama
