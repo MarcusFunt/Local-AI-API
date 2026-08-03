@@ -50,7 +50,7 @@ jobs:
             --user root \
             --entrypoint /bin/sh \
             --mount type=bind,source="${{ github.workspace }}",target=/source,readonly \
-            local-ai-api-gateway:latest \
+            local-ai-api-gateway:1.0.0 \
             -ec '
               apt-get update >/dev/null
               apt-get install -y --no-install-recommends ripgrep >/dev/null

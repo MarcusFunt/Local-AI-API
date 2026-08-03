@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import HTTPException, UploadFile
 
 from .config import Settings
+from .models import MAX_SPEECH_TEXT_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,8 @@ _CHATTERBOX_MODELS: dict[tuple[str, str], Any] = {}
 _WHISPER_MODEL_LOCKS: dict[tuple[str, str, str], Lock] = {}
 _CHATTERBOX_MODEL_LOCKS: dict[tuple[str, str], Lock] = {}
 _MODEL_LOCKS_GUARD = Lock()
+_INFERENCE_SEMAPHORES: dict[tuple[int, str], asyncio.Semaphore] = {}
+_INFERENCE_SEMAPHORES_GUARD = Lock()
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
@@ -97,6 +100,17 @@ def _model_load_lock(locks: dict[Any, Lock], cache_key: Any) -> Lock:
             lock = Lock()
             locks[cache_key] = lock
         return lock
+
+
+def _inference_semaphore(kind: str) -> asyncio.Semaphore:
+    """Return a per-event-loop, per-model-family one-at-a-time inference queue."""
+    key = (id(asyncio.get_running_loop()), kind)
+    with _INFERENCE_SEMAPHORES_GUARD:
+        semaphore = _INFERENCE_SEMAPHORES.get(key)
+        if semaphore is None:
+            semaphore = asyncio.Semaphore(1)
+            _INFERENCE_SEMAPHORES[key] = semaphore
+        return semaphore
 
 
 async def _read_upload_to_tempfile(file: UploadFile, max_bytes: int | None = None) -> Path:
@@ -212,7 +226,8 @@ async def _transcribe_path_with_whisper(
         return result
 
     try:
-        return await asyncio.to_thread(run_transcription)
+        async with _inference_semaphore("whisper"):
+            return await asyncio.to_thread(run_transcription)
     except HTTPException:
         raise
     except Exception as exc:
@@ -324,6 +339,12 @@ async def synthesize_speech_with_chatterbox(
             "Speech input must not be empty.",
             "empty_speech_input",
         )
+    if len(text) > MAX_SPEECH_TEXT_CHARS:
+        raise _audio_exception(
+            422,
+            f"Speech input must not exceed {MAX_SPEECH_TEXT_CHARS} characters.",
+            "speech_input_too_large",
+        )
 
     device = _select_device(settings.chatterbox_device)
 
@@ -342,7 +363,8 @@ async def synthesize_speech_with_chatterbox(
         return _wav_bytes_from_tensor(wav, sample_rate)
 
     try:
-        return await asyncio.to_thread(run_synthesis)
+        async with _inference_semaphore("chatterbox"):
+            return await asyncio.to_thread(run_synthesis)
     except HTTPException:
         raise
     except Exception as exc:

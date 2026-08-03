@@ -6,7 +6,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from ..rag.config import MAX_TOP_K, TOP_K
 
 router = APIRouter()
 
@@ -15,7 +17,7 @@ _MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MiB
 
 class SearchRequest(BaseModel):
     query: str
-    top_k: int = 4
+    top_k: int = Field(default=TOP_K, ge=1, le=MAX_TOP_K)
     document_id: str | None = None
 
 

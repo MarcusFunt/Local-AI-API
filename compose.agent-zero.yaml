@@ -1,11 +1,11 @@
 services:
   agent-zero:
-    image: local-ai-api-agent-zero-cockpit:latest
+    image: local-ai-api-agent-zero-cockpit:1.0.0
     build:
       context: .
       dockerfile: Dockerfile.agent-zero-cockpit
       args:
-        AGENT_ZERO_IMAGE_TAG: ${AGENT_ZERO_IMAGE_TAG:-latest}
+        AGENT_ZERO_BASE_IMAGE: ${AGENT_ZERO_BASE_IMAGE:-agent0ai/agent-zero@sha256:7f8bc5cc77c3ab9fb1216a51dc0ae7f65f0536b3a31dd74b600287818ac140bc}
     restart: unless-stopped
     environment:
       API_KEY_OTHER: ${API_KEY:-unused}
@@ -24,7 +24,7 @@ services:
       - /bin/sh
       - -c
       - |
-        python - <<'PY'
+        /opt/venv-a0/bin/python - <<'PY'
         import os
         from pathlib import Path
 

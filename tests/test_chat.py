@@ -337,6 +337,67 @@ class TestNonStreamingChatCompletion:
         assert captured[0]["messages"][0]["content"] == "describe"
         assert captured[0]["messages"][0]["images"] == ["aW1hZ2U="]
 
+    async def test_unknown_content_part_type_is_rejected(self, client: httpx.AsyncClient):
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "main",
+                "messages": [{"role": "user", "content": [{"type": "audio", "audio": "..."}]}],
+            },
+        )
+
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "invalid_request"
+
+    async def test_invalid_image_data_url_is_rejected(self, client: httpx.AsyncClient):
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "main",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": "https://example.test/image.png"}}
+                        ],
+                    }
+                ],
+            },
+        )
+
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "invalid_request"
+
+    async def test_invalid_image_base64_is_rejected(self, client: httpx.AsyncClient):
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "main",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": "data:image/png;base64,%%%%"}}
+                        ],
+                    }
+                ],
+            },
+        )
+
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "invalid_request"
+
+    async def test_chat_text_limit_is_enforced(self, client: httpx.AsyncClient):
+        from gateway.models import MAX_CHAT_TEXT_CHARS
+
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={"model": "main", "messages": [{"role": "user", "content": "x" * (MAX_CHAT_TEXT_CHARS + 1)}]},
+        )
+
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "invalid_request"
+
     async def test_tools_and_json_response_format_are_forwarded(
         self, client: httpx.AsyncClient
     ):
@@ -489,6 +550,18 @@ class TestNonStreamingChatCompletion:
         assert resp.status_code == 502
         assert resp.json()["error"]["code"] == "ollama_invalid_response"
 
+    @pytest.mark.parametrize("payload", [[], "not-an-object"])
+    async def test_non_object_ollama_json_becomes_502(self, client: httpx.AsyncClient, payload: object):
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(return_value=httpx.Response(200, json=payload))
+            resp = await client.post(
+                "/v1/chat/completions",
+                json={"model": "main", "messages": [{"role": "user", "content": "hi"}]},
+            )
+
+        assert resp.status_code == 502
+        assert resp.json()["error"]["code"] == "ollama_invalid_response"
+
     async def test_body_too_large_returns_413(self, client: httpx.AsyncClient):
         # The fixture uses max_request_body_bytes=10_485_760 but we send
         # Content-Length header that exceeds it manually.
@@ -604,6 +677,17 @@ class TestNonStreamingChatCompletion:
 
 
 class TestStreamingChatCompletion:
+    async def test_non_object_first_ndjson_line_becomes_502(self, client: httpx.AsyncClient):
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(return_value=httpx.Response(200, content=b'[]\n'))
+            resp = await client.post(
+                "/v1/chat/completions",
+                json={"model": "main", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+            )
+
+        assert resp.status_code == 502
+        assert resp.json()["error"]["code"] == "ollama_invalid_response"
+
     async def test_streaming_content_type(self, client: httpx.AsyncClient):
         chunks = [
             {"model": "qwen3.5:9b", "message": {"role": "assistant", "content": "Hi"}, "done": False},

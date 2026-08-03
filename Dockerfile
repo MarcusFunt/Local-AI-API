@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12.11-slim-bookworm@sha256:519591d6871b7bc437060736b9f7456b8731f1499a57e22e6c285135ae657bf7
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -42,6 +42,10 @@ RUN python -m pip install --upgrade pip && \
     fi && \
     if [ "$INSTALL_MCP" = "true" ]; then python -m pip install -r requirements-mcp.txt; fi && \
     if [ "$INSTALL_RAG" = "true" ]; then python -m pip install -r requirements-rag.txt; fi && \
+    # RAG/MCP dependencies can upgrade setuptools after requirements-audio.txt.
+    # Chatterbox's resemble-perth dependency needs pkg_resources, so restore the
+    # compatible setuptools version after every optional dependency install.
+    if [ "$INSTALL_AUDIO" = "true" ]; then python -m pip install "setuptools<81"; fi && \
     apt-get purge -y --auto-remove build-essential && \
     rm -rf /var/lib/apt/lists/*
 

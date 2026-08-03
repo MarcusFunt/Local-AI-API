@@ -149,7 +149,7 @@ build_gateway_image() {
     docker run --rm \
       --entrypoint python \
       --workdir /app \
-      local-ai-api-gateway:latest \
+      local-ai-api-gateway:1.0.0 \
       -m pytest tests -v
   fi
 }

@@ -53,6 +53,11 @@ def _read_git_state(root: Path) -> dict[str, Any]:
     }
 
 
+def _approved_update_branch() -> str:
+    branch = os.environ.get("REMOTE_BRANCH", "main").strip()
+    return branch or "main"
+
+
 async def get_repo_update_status() -> dict[str, Any]:
     """Report repository state; scheduled installers are the only update owner."""
     root = _repo_root()
@@ -68,6 +73,10 @@ async def get_repo_update_status() -> dict[str, Any]:
     payload["root"] = availability["root"]
     try:
         payload.update(await asyncio.to_thread(_read_git_state, root))
+        payload["approved_branch"] = _approved_update_branch()
+        payload["clean_approved_checkout"] = (
+            payload["branch"] == payload["approved_branch"] and payload["dirty"] is False
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         payload["reason"] = f"Git metadata is temporarily unavailable: {exc}"
     return payload

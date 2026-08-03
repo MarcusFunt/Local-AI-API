@@ -1,8 +1,11 @@
 """Focused tests for the isolated repository-operations core."""
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
+import threading
+import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -28,7 +31,7 @@ def manager(tmp_path: Path) -> RepoOpsManager:
     (source / "README.md").write_text("Repository worker fixture\n", encoding="utf-8")
     _git(source, "add", ".")
     _git(source, "commit", "-m", "fixture")
-    return RepoOpsManager(RepoOpsConfig(source, tmp_path / "workspaces"))
+    return RepoOpsManager(RepoOpsConfig(source, tmp_path / "workspaces", autonomy_enabled=True))
 
 
 def test_repo_status_and_workspace_are_isolated(manager: RepoOpsManager):
@@ -77,14 +80,45 @@ def test_paths_cannot_escape_or_follow_symlinks(manager: RepoOpsManager):
 
 
 def test_only_named_check_presets_are_available(manager: RepoOpsManager):
-    manager.create_workspace("check-preset")
-    workspace = manager.config.workspaces_root / "check-preset"
+    assert manager._require_check_preset("compile") == "compile"
+    with pytest.raises(RepoOpsError, match="Unknown check"):
+        manager._require_check_preset("rm -rf /")
+    with pytest.raises(RepoOpsError, match="Unknown check"):
+        manager._require_check_preset("ui_audit")
 
-    assert manager._check_command(workspace, "compile")[-2:] == ["compileall", "gateway"]
-    with pytest.raises(RepoOpsError, match="Unknown check"):
-        manager._check_command(workspace, "rm -rf /")
-    with pytest.raises(RepoOpsError, match="Unknown check"):
-        manager._check_command(workspace, "ui_audit")
+
+def test_checks_are_queued_for_the_unnetworked_worker(manager: RepoOpsManager, monkeypatch: pytest.MonkeyPatch):
+    manager.create_workspace("check-preset")
+    monkeypatch.setattr(manager, "_command", lambda *_args, **_kwargs: pytest.fail("core must not execute checks"))
+
+    def worker() -> None:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            jobs = list(manager._verification_jobs_root.glob("*.json"))
+            if jobs:
+                job = json.loads(jobs[0].read_text(encoding="utf-8"))
+                (manager._verification_results_root / jobs[0].name).write_text(
+                    json.dumps(
+                        {
+                            **job,
+                            "passed": True,
+                            "returncode": 0,
+                            "output": "verification evidence",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return
+            time.sleep(0.01)
+        pytest.fail("verification job was not queued")
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    result = manager.run_check("check-preset", "compile")
+    thread.join(timeout=2)
+
+    assert result["passed"] is True
+    assert result["output"] == "verification evidence"
 
 
 def test_task_report_never_commits_or_merges(manager: RepoOpsManager):
@@ -123,7 +157,33 @@ def test_capture_ui_queues_unnetworked_workspace_preview(manager: RepoOpsManager
 
     assert payload["status"] == "queued"
     assert manager.preview_status("ui-evidence") == {"status": "queued"}
-    assert (manager.config.workspaces_root / ".preview-jobs" / "ui-evidence.json").is_file()
+    assert (manager._preview_jobs_root / "ui-evidence.json").is_file()
+
+
+def test_autonomous_tools_are_rejected_when_disabled(manager: RepoOpsManager):
+    manager.create_workspace("autonomy-flag")
+    disabled = RepoOpsManager(
+        RepoOpsConfig(
+            manager.config.source_root,
+            manager.config.workspaces_root,
+            autonomy_enabled=False,
+        )
+    )
+
+    with pytest.raises(RepoOpsError, match="REPO_OPS_AUTONOMY_ENABLED"):
+        disabled.start_autonomous_run("autonomy-flag")
+
+    manager.start_autonomous_run("autonomy-flag")
+    for operation, args in (
+        (disabled.autonomous_status, ("autonomy-flag",)),
+        (disabled.record_autonomous_progress, ("autonomy-flag", "attempted update")),
+        (disabled.evaluate_workspace, ("autonomy-flag",)),
+        (disabled.pause_autonomous_run, ("autonomy-flag", "paused")),
+        (disabled.resume_autonomous_run, ("autonomy-flag",)),
+        (disabled.stop_autonomous_run, ("autonomy-flag", "stopped")),
+    ):
+        with pytest.raises(RepoOpsError, match="REPO_OPS_AUTONOMY_ENABLED"):
+            operation(*args)
 
 
 def test_autonomous_run_is_bounded_and_archives_only_passing_changed_work(manager: RepoOpsManager, monkeypatch: pytest.MonkeyPatch):

@@ -11,6 +11,7 @@ services:
     environment:
       REPO_OPS_SOURCE_ROOT: /source
       REPO_OPS_WORKSPACES_ROOT: /workspaces
+      REPO_OPS_JOBS_ROOT: /jobs
       # GitNexus labels the clone by the read-only /source mount origin.
       REPO_OPS_GITNEXUS_REPO: source
       REPO_OPS_ARCHIVE_ROOT: /archives
@@ -27,6 +28,9 @@ services:
       - type: volume
         source: repo-ops-workspaces
         target: /workspaces
+      - type: volume
+        source: repo-ops-jobs
+        target: /jobs
       - type: bind
         source: ${REPO_OPS_ARCHIVE_HOST_PATH:-./.local/repo-ops-archives}
         target: /archives
@@ -71,8 +75,9 @@ services:
     labels:
       local-ai-api.component: repo-ops-lifecycle
 
-  # Processes preview jobs from the shared workspace volume. It has no network,
-  # source checkout, archive mount, Agent Zero state, MCP endpoint, or host port.
+  # Processes preview and fixed verification jobs. It has no network, source
+  # checkout, archive mount, Agent Zero state, MCP endpoint, or host port. The
+  # disposable workspaces are mounted read-only; it writes only job evidence.
   repo-ops-preview:
     build:
       context: .
@@ -82,24 +87,31 @@ services:
     network_mode: none
     read_only: true
     tmpfs:
-      - /tmp
-      - /run
+      - /tmp:rw,nosuid,nodev,noexec,size=1g
+      - /run:rw,nosuid,nodev,noexec,size=16m
     environment:
       REPO_OPS_WORKSPACES_ROOT: /workspaces
+      REPO_OPS_JOBS_ROOT: /jobs
       PYTHONDONTWRITEBYTECODE: "1"
+      REPO_OPS_WORKER_TIMEOUT_SECONDS: "600"
     volumes:
       - type: volume
         source: repo-ops-workspaces
         target: /workspaces
+        read_only: true
+      - type: volume
+        source: repo-ops-jobs
+        target: /jobs
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
-    pids_limit: 128
-    mem_limit: 2g
-    cpus: 2.0
+    pids_limit: 64
+    mem_limit: 1g
+    cpus: 1.0
     labels:
       local-ai-api.component: repo-ops-preview
 
 volumes:
   repo-ops-workspaces:
+  repo-ops-jobs:

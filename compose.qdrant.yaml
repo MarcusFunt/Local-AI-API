@@ -14,7 +14,7 @@ name: local-ai-api
 
 services:
   qdrant:
-    image: qdrant/qdrant:latest
+    image: ${QDRANT_IMAGE:-qdrant/qdrant@sha256:0bd98fa7977f1e75694779359ca4e212822e5a71334e28421182f72f209d5286}
     restart: unless-stopped
     # Share the ollama service's network namespace so Qdrant is reachable
     # at 127.0.0.1:6333 by both the gateway and Ollama containers.

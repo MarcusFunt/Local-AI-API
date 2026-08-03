@@ -5,12 +5,13 @@ import platform
 import os
 import socket
 import time
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ..app_update import get_repo_update_status
@@ -22,8 +23,11 @@ router = APIRouter()
 _STARTED_AT = time.monotonic()
 _STATUS_TIMEOUT = 5.0
 _CHECK_TIMEOUT = 120.0
+_STATUS_CHECK_MIN_INTERVAL_SECONDS = 30.0
 _DEV_ALIAS = "dev"
 _LAST_DEV_CHECK: dict[str, Any] | None = None
+_STATUS_CHECK_LAST: dict[str, float] = {}
+_STATUS_CHECK_LOCK = asyncio.Lock()
 
 
 def _utc_now() -> datetime:
@@ -36,6 +40,28 @@ def _iso_now() -> str:
 
 def _elapsed_ms(started_at: float) -> int:
     return max(0, round((time.monotonic() - started_at) * 1000))
+
+
+async def _enforce_status_check_rate_limit(request: Request) -> None:
+    client = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    async with _STATUS_CHECK_LOCK:
+        previous = _STATUS_CHECK_LAST.get(client)
+        if previous is not None:
+            retry_after = _STATUS_CHECK_MIN_INTERVAL_SECONDS - (now - previous)
+            if retry_after > 0:
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": {
+                            "message": f"Status checks are limited to one every {_STATUS_CHECK_MIN_INTERVAL_SECONDS:g} seconds.",
+                            "type": "rate_limit_error",
+                            "code": "status_check_rate_limited",
+                        }
+                    },
+                    headers={"Retry-After": str(max(1, round(retry_after)))},
+                )
+        _STATUS_CHECK_LAST[client] = now
 
 
 def _format_bytes(size: int | None) -> str | None:
@@ -87,6 +113,8 @@ async def _fetch_ollama_tags() -> tuple[dict[str, Any], list[dict[str, Any]]]:
                 [],
             )
         payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("Ollama returned a JSON response that was not an object.")
         models = payload.get("models", [])
         if not isinstance(models, list):
             models = []
@@ -301,8 +329,9 @@ async def status_json() -> JSONResponse:
 
 
 @router.post("/status/check")
-async def run_status_check() -> JSONResponse:
+async def run_status_check(request: Request) -> JSONResponse:
     global _LAST_DEV_CHECK
+    await _enforce_status_check_rate_limit(request)
     _LAST_DEV_CHECK = await _run_dev_check()
     return JSONResponse(_LAST_DEV_CHECK)
 

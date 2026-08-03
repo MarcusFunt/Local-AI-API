@@ -1,9 +1,16 @@
 # Thin local overlay for Agent Zero. The workspace cockpit itself is a bundled
 # extension; user state remains in /a0/usr and no host filesystem is mounted.
-ARG AGENT_ZERO_IMAGE_TAG=latest
-FROM agent0ai/agent-zero:${AGENT_ZERO_IMAGE_TAG}
+ARG AGENT_ZERO_BASE_IMAGE=agent0ai/agent-zero@sha256:7f8bc5cc77c3ab9fb1216a51dc0ae7f65f0536b3a31dd74b600287818ac140bc
+FROM ${AGENT_ZERO_BASE_IMAGE}
 
 COPY agent_zero_overlay/plugins /a0/plugins
+
+# Agent Zero's local model configuration imports yaml during startup. Install
+# and verify the exact dependency in the same virtual environment that runs its
+# UI.  The pinned base image does not put its pyenv shims on PATH while Docker
+# build steps run, so the unqualified `python` command is unavailable here.
+RUN /opt/venv-a0/bin/python -m pip install --no-cache-dir PyYAML==6.0.2 && \
+    /opt/venv-a0/bin/python -c "import yaml; assert yaml.__version__ == '6.0.2'"
 
 # A candidate image must contain the whole authenticated cockpit boundary
 # before it can be tagged/recreated by the repository updater.

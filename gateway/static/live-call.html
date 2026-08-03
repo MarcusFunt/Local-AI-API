@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230a0d12'/%3E%3Cpath d='M10 9v14l12-7z' fill='%2372d1ff'/%3E%3C/svg%3E">
   <title>Live Call | Local AI API</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #0a0d12; color: #f2f5fa; }
@@ -17,6 +18,7 @@
     input, select, button { font: inherit; }
     input, select { width: 100%; border: 1px solid #415067; border-radius: 10px; background: #0d131d; color: #f2f5fa; padding: 10px 12px; }
     .key { grid-column: 1 / -1; }
+    .field-hint { color: #8493a8; font-size: .78rem; line-height: 1.35; }
     button { cursor: pointer; border: 0; border-radius: 12px; color: #06111e; background: #72d1ff; padding: 12px 16px; font-weight: 700; }
     button:hover:not(:disabled) { background: #a3e2ff; }
     button:disabled { cursor: not-allowed; opacity: .52; }
@@ -29,6 +31,7 @@
     .turn { margin: 0 0 13px; white-space: pre-wrap; }
     .turn:last-child { margin-bottom: 0; }
     .you { color: #b4cdfd; } .assistant { color: #d5f6de; }
+    .transcript-empty { margin: 0; color: #8493a8; font-style: italic; }
     .hint { margin: 15px 0 0; font-size: .84rem; color: #8493a8; line-height: 1.45; }
     @media (max-width: 540px) { main { padding: 22px; } .settings { grid-template-columns: 1fr; } }
   </style>
@@ -37,20 +40,21 @@
   <main>
     <h1>Live Call</h1>
     <p class="lede">Talk with your local assistant in a persistent, private voice session. Hold the button while speaking; release it to send your turn.</p>
-    <div class="settings">
+    <form class="settings" id="call-settings">
       <label>Chat model
         <select id="model"><option value="main">main</option><option value="small">small</option><option value="dev">dev</option></select>
       </label>
-      <label>Whisper model
-        <select id="whisper"><option value="small">small</option><option value="base">base</option><option value="tiny">tiny</option></select>
+      <label>Whisper model for this call
+        <select id="whisper" aria-describedby="whisper-hint"><option value="small">small</option><option value="base">base</option><option value="tiny">tiny</option></select>
+        <span class="field-hint" id="whisper-hint">Overrides the gateway default for this call only.</span>
       </label>
       <label class="key">API key (only when gateway auth is enabled)
         <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Optional; kept in this browser tab only">
       </label>
-    </div>
+    </form>
     <div class="controls"><button id="connect" type="button">Start call</button><span id="status" role="status">Not connected</span></div>
     <button id="talk" type="button" disabled>Hold to talk</button>
-    <section id="transcript" aria-live="polite" aria-label="Conversation transcript"></section>
+    <section id="transcript" aria-live="polite" aria-label="Conversation transcript"><p class="transcript-empty" id="transcript-empty">Your conversation will appear here after you speak.</p></section>
     <p class="hint">Microphone access requires HTTPS (Tailscale Serve provides it) or localhost. Audio is sent only while you hold the talk button.</p>
   </main>
   <script>
@@ -71,6 +75,7 @@
       }
 
       function addTurn(kind, text = '') {
+        document.querySelector('#transcript-empty')?.remove();
         const line = document.createElement('p');
         line.className = `turn ${kind}`;
         line.textContent = `${kind === 'you' ? 'You' : 'Assistant'}: ${text}`;
@@ -180,6 +185,10 @@
       function stopRecording() { if (recorder?.state === 'recording') recorder.stop(); }
       connectButton.addEventListener('click', () => {
         if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'session.close' })); else connect();
+      });
+      document.querySelector('#call-settings').addEventListener('submit', event => {
+        event.preventDefault();
+        if (!socket || socket.readyState !== WebSocket.OPEN) connect();
       });
       talkButton.addEventListener('pointerdown', event => { event.preventDefault(); startRecording(); });
       talkButton.addEventListener('pointerup', stopRecording);

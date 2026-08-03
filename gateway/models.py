@@ -1,11 +1,38 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _CHAT_ROLES = {"system", "user", "assistant", "tool", "developer"}
 _RESPONSE_FORMAT_TYPES = {"text", "json_object", "json_schema"}
+_SUPPORTED_CONTENT_PART_TYPES = {"text", "image_url"}
+MAX_CHAT_TEXT_CHARS = 100_000
+MAX_SPEECH_TEXT_CHARS = 10_000
+
+
+def validate_base64_image_url(value: Any) -> str:
+    """Return validated image data, accepting only local base64 data URLs."""
+    url = value.get("url") if isinstance(value, dict) else value
+    if not isinstance(url, str):
+        raise ValueError("Image content parts must include an image_url.url string.")
+    metadata, separator, encoded = url.partition(",")
+    if (
+        not separator
+        or not metadata.lower().startswith("data:image/")
+        or not metadata.lower().endswith(";base64")
+        or not encoded
+    ):
+        raise ValueError("Image content parts must use a non-empty base64 data:image URL.")
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("Image content part contains invalid base64 data.") from exc
+    if not decoded:
+        raise ValueError("Image content part must contain non-empty image data.")
+    return encoded
 
 
 class ChatMessage(BaseModel):
@@ -32,15 +59,26 @@ class ChatMessage(BaseModel):
         cls, value: str | list[dict[str, Any]] | None
     ) -> str | list[dict[str, Any]] | None:
         if value is None or isinstance(value, str):
+            if isinstance(value, str) and len(value) > MAX_CHAT_TEXT_CHARS:
+                raise ValueError(f"Chat message content must not exceed {MAX_CHAT_TEXT_CHARS} characters.")
             return value
         if not value:
             raise ValueError("Content part list must not be empty.")
         for part in value:
+            if not isinstance(part, dict):
+                raise ValueError("Each content part must be an object.")
             part_type = part.get("type")
             if not isinstance(part_type, str) or not part_type:
                 raise ValueError("Each content part must include a non-empty type.")
+            if part_type not in _SUPPORTED_CONTENT_PART_TYPES:
+                allowed = ", ".join(sorted(_SUPPORTED_CONTENT_PART_TYPES))
+                raise ValueError(f"Unsupported content part type {part_type!r}. Allowed types: {allowed}.")
             if part_type == "text" and not isinstance(part.get("text"), str):
                 raise ValueError("Text content parts must include text.")
+            if part_type == "text" and len(part["text"]) > MAX_CHAT_TEXT_CHARS:
+                raise ValueError(f"Text content parts must not exceed {MAX_CHAT_TEXT_CHARS} characters.")
+            if part_type == "image_url":
+                validate_base64_image_url(part.get("image_url"))
         return value
 
     @model_validator(mode="after")
@@ -164,7 +202,7 @@ class AudioSpeechRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     model: str | None = None
-    input: str
+    input: str = Field(min_length=1, max_length=MAX_SPEECH_TEXT_CHARS)
     voice: str | None = None
     response_format: str = "wav"
     speed: float | None = None

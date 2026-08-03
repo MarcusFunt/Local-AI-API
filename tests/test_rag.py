@@ -63,6 +63,52 @@ class TestChunkText:
         chunks = chunk_text(text, chunk_size=512, overlap=64)
         assert len(chunks) == 1
 
+    @pytest.mark.parametrize("chunk_size,overlap", [(0, 0), (10, -1), (10, 10), (10, 11)])
+    def test_chunk_text_rejects_non_advancing_windows(self, chunk_size: int, overlap: int):
+        from gateway.rag.chunker import chunk_text
+
+        with pytest.raises(ValueError):
+            chunk_text("one two three", chunk_size=chunk_size, overlap=overlap)
+
+
+class TestRagSettings:
+    def test_invalid_environment_values_fall_back_to_valid_defaults(self):
+        from gateway.rag.config import MAX_TOP_K, RagSettings
+
+        settings = RagSettings.from_environment(
+            {
+                "RAG_EMBED_DIM": "not-an-int",
+                "RAG_TOP_K": "999999",
+                "RAG_CHUNK_SIZE": "invalid",
+                "RAG_CHUNK_OVERLAP": "also-invalid",
+            }
+        )
+
+        assert settings.embed_dim == 768
+        assert settings.top_k == MAX_TOP_K
+        assert settings.chunk_size == 512
+        assert settings.chunk_overlap == 64
+
+    def test_overlap_at_or_above_chunk_size_is_normalized(self):
+        from gateway.rag.config import RagSettings
+
+        settings = RagSettings.from_environment(
+            {"RAG_CHUNK_SIZE": "10", "RAG_CHUNK_OVERLAP": "10"}
+        )
+
+        assert settings.chunk_size > settings.chunk_overlap >= 0
+
+
+def test_search_request_caps_top_k():
+    from pydantic import ValidationError
+
+    from gateway.rag.config import MAX_TOP_K
+    from gateway.routes.documents import SearchRequest
+
+    assert SearchRequest(query="hello", top_k=MAX_TOP_K).top_k == MAX_TOP_K
+    with pytest.raises(ValidationError):
+        SearchRequest(query="hello", top_k=MAX_TOP_K + 1)
+
 
 class TestExtractText:
     def test_extract_text_utf8(self):

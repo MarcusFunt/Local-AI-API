@@ -75,6 +75,7 @@ async def client(default_settings: Settings, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(audio_module, "settings", default_settings)
     monkeypatch.setattr(conversation_module, "settings", default_settings)
     monkeypatch.setattr(status_module, "settings", default_settings)
+    status_module._STATUS_CHECK_LAST.clear()
 
     # Patch the module-level settings used by middleware (read at request time)
     from gateway import main as main_module

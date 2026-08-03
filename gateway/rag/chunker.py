@@ -8,6 +8,10 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
     Split text into overlapping word-based chunks.
     Each chunk is at most chunk_size words. Adjacent chunks share `overlap` words.
     """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than zero.")
+    if overlap < 0 or overlap >= chunk_size:
+        raise ValueError("overlap must be non-negative and smaller than chunk_size.")
     words = text.split()
     if not words:
         return []

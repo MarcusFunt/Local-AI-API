@@ -202,11 +202,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    mcp_app = None
+    try:
+        from .mcp_server.server import mcp as _mcp_server
+
+        # FastMCP 2+ exposes an ASGI application through ``http_app()``.
+        # Use path="/" because FastAPI adds the public /mcp mount prefix.
+        mcp_app = _mcp_server.http_app(path="/")
+    except ImportError:
+        logger.info("fastmcp not installed -- MCP server not available")
+
+    @asynccontextmanager
+    async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
+        async with lifespan(app):
+            if mcp_app is None:
+                yield
+            else:
+                # Mounted sub-applications do not run their own lifespan.
+                # FastMCP needs this context to initialize its HTTP sessions.
+                async with mcp_app.lifespan(app):
+                    yield
+
     app = FastAPI(
         title="Local AI API Gateway",
         description="Private OpenAI-compatible gateway for Ollama over Tailscale.",
         version="1.0.0",
-        lifespan=lifespan,
+        lifespan=app_lifespan,
     )
 
     # Middleware: registered in reverse execution order.
@@ -229,7 +250,7 @@ def create_app() -> FastAPI:
                     "code": "error",
                 }
             }
-        return JSONResponse(status_code=exc.status_code, content=content)
+        return JSONResponse(status_code=exc.status_code, content=content, headers=exc.headers)
 
     # Custom validation error handler -- emit OpenAI-compatible error envelope.
     @app.exception_handler(RequestValidationError)
@@ -253,13 +274,10 @@ def create_app() -> FastAPI:
     app.include_router(status_router)
     app.include_router(documents_router)
 
-    # MCP server -- mount at /mcp if fastmcp is installed
-    try:
-        from .mcp_server.server import mcp as _mcp_server
-        app.mount("/mcp", _mcp_server.get_asgi_app())
+    # MCP server -- mount at /mcp if fastmcp is installed.
+    if mcp_app is not None:
+        app.mount("/mcp", mcp_app)
         logger.info("MCP server mounted at /mcp")
-    except ImportError:
-        logger.info("fastmcp not installed -- MCP server not available")
 
     return app
 

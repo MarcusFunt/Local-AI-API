@@ -51,6 +51,14 @@ def test_preview_worker_is_unnetworked_and_has_no_source_or_archive_mount():
     assert "target: /archives" not in preview
     assert "ports:" not in preview
     assert "/var/run/docker.sock" not in preview
+    assert "source: repo-ops-workspaces" in preview
+    assert "target: /workspaces" in preview
+    assert "source: repo-ops-jobs" in preview
+    assert "target: /jobs" in preview
+    assert "pids_limit: 64" in preview
+    assert "mem_limit: 1g" in preview
+    assert "cpus: 1.0" in preview
+    assert "noexec" in preview
 
 
 def test_preview_worker_has_its_package_and_browser_runtime_paths():
@@ -60,4 +68,8 @@ def test_preview_worker_has_its_package_and_browser_runtime_paths():
     assert '"PYTHONPATH": "/app"' in worker
     assert '"PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright"' in worker
     assert "--screenshot" in worker
+    assert "_run_verification" in worker
+    assert "shutil.copytree" in worker
     assert "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright" in image
+    assert "mkdir -p /jobs /workspaces /ms-playwright" in image
+    assert "/app /jobs /workspaces /ms-playwright /home/repoops" in image

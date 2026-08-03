@@ -1,6 +1,7 @@
 """Tests for OpenAI-style local audio endpoints."""
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import io
 import sys
@@ -239,6 +240,17 @@ class TestAudioSpeech:
         assert resp.status_code == 422
         assert resp.json()["error"]["code"] == "unsupported_speech_option"
 
+    async def test_speech_input_has_a_text_limit(self, client: httpx.AsyncClient):
+        from gateway.models import MAX_SPEECH_TEXT_CHARS
+
+        resp = await client.post(
+            "/v1/audio/speech",
+            json={"model": "chatterbox", "input": "x" * (MAX_SPEECH_TEXT_CHARS + 1)},
+        )
+
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "invalid_request"
+
 
 class TestAudioUploadHelpers:
     async def test_upload_is_written_to_tempfile_in_chunks(self):
@@ -295,6 +307,38 @@ class TestAudioModelLoading:
 
         assert calls == 1
         assert results == [loaded_model, loaded_model]
+
+    async def test_chatterbox_inference_is_serialized_after_model_loading(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        import gateway.audio as audio_module
+
+        audio_module._INFERENCE_SEMAPHORES.clear()
+        active = 0
+        maximum_active = 0
+
+        class FakeModel:
+            sr = 24_000
+
+            def generate(self, text: str, **_kwargs: Any) -> object:
+                nonlocal active, maximum_active
+                active += 1
+                maximum_active = max(maximum_active, active)
+                time.sleep(0.05)
+                active -= 1
+                return object()
+
+        monkeypatch.setattr(audio_module, "_load_chatterbox_model", lambda *_args: FakeModel())
+        monkeypatch.setattr(audio_module, "_wav_bytes_from_tensor", lambda *_args: b"wav")
+        settings = SimpleNamespace(chatterbox_device="cpu")
+
+        result = await asyncio.gather(
+            audio_module.synthesize_speech_with_chatterbox("one", "chatterbox", settings),
+            audio_module.synthesize_speech_with_chatterbox("two", "chatterbox", settings),
+        )
+
+        assert result == [b"wav", b"wav"]
+        assert maximum_active == 1
 
     async def test_chatterbox_model_load_is_locked_per_cache_key(
         self, monkeypatch: pytest.MonkeyPatch
