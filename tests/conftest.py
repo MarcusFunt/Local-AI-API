@@ -63,6 +63,7 @@ async def client(default_settings: Settings, monkeypatch: pytest.MonkeyPatch):
     """Async test client wired to the app, with patched settings."""
     import gateway.config as cfg_module
     import gateway.routes.health as health_module
+    import gateway.routes.agents as agents_module
     import gateway.routes.chat as chat_module
     import gateway.routes.audio as audio_module
     import gateway.routes.conversation as conversation_module
@@ -72,6 +73,7 @@ async def client(default_settings: Settings, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(cfg_module, "settings", default_settings)
     monkeypatch.setattr(health_module, "settings", default_settings)
     monkeypatch.setattr(chat_module, "settings", default_settings)
+    monkeypatch.setattr(agents_module, "settings", default_settings)
     monkeypatch.setattr(audio_module, "settings", default_settings)
     monkeypatch.setattr(conversation_module, "settings", default_settings)
     monkeypatch.setattr(status_module, "settings", default_settings)

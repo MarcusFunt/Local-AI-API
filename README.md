@@ -13,6 +13,7 @@ A private, lightweight OpenAI-compatible gateway for [Ollama](https://ollama.com
 - Proxies requests to Ollama running on `127.0.0.1:11434`
 - Translates Ollama's response format back to the OpenAI envelope
 - Supports both streaming (`stream: true`) and non-streaming responses
+- Offers opt-in, performance-first multi-call agents at `POST /v1/agent/completions`
 - Accepts `POST /v1/audio/transcriptions` requests using local Whisper models
 - Accepts `POST /v1/audio/speech` requests using local Chatterbox TTS
 - Provides health endpoints at `GET /health`, `GET /health/ollama`, and `GET /health/qdrant`
@@ -39,6 +40,50 @@ The correct network layout is:
 Tailscale Serve acts as the TLS terminator and access-control layer. The gateway adds model-name gating and optional API-key auth on top. Ollama sees only local loopback traffic.
 
 `OLLAMA_BASE_URL` is validated at startup and must point to a loopback host such as `127.0.0.1`, `localhost`, or `::1`. Never open port 11434 in your firewall or router.
+
+---
+
+## Performance-first agents
+
+`POST /v1/agent/completions` is a deliberate, non-streaming surface for tasks
+where a better answer is worth several model calls. It is stateless and uses
+the same Tailscale, optional bearer authentication, body-size limit, request
+timeout, and model allow-list as normal chat completions. It does not execute
+client-supplied tools or enable arbitrary model names.
+
+- `mode: "graph"` is a LangChain/LangGraph-style state machine: planner →
+  drafter → critic → finalizer. It uses the `agent` profile by default.
+- `mode: "mixture_of_experts"` obtains independent specialist opinions, then
+  lets the selected `model` synthesize a final answer. By default, it uses
+  `main`, `agent-utility`, and `agent` as specialists. Supply two to four
+  unique `expert_models` aliases to control that ensemble.
+
+The graph always makes four calls. The expert mode makes one call per
+specialist plus a final synthesis call; its specialists are intentionally
+sequential so a local machine does not have to load several large models at
+once. Per-stage output is limited to 4,096 tokens and intermediate drafts are
+not returned to the caller. The response reports aggregate token use and the
+number of completed stages in `metadata`.
+
+```bash
+curl http://127.0.0.1:8080/v1/agent/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "mode": "graph",
+    "messages": [{"role": "user", "content": "Design a reliable backup plan."}]
+  }'
+```
+
+```bash
+curl http://127.0.0.1:8080/v1/agent/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "mode": "mixture_of_experts",
+    "model": "agent",
+    "expert_models": ["main", "agent-utility"],
+    "messages": [{"role": "user", "content": "Compare these architecture options."}]
+  }'
+```
 
 ---
 

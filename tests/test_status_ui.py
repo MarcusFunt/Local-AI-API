@@ -94,6 +94,7 @@ class TestStatusJson:
         assert "available" in body["repository"]
         assert body["autonomy"]["max_runtime_hours"] == 24
         assert body["autonomy"]["max_storage_gib"] == 20
+        assert body["autonomy"]["agent_zero_cockpit_url"].endswith("/plugins/local_ai_api_cockpit/webui/cockpit.html")
 
     async def test_reports_missing_dev_model_as_degraded(self, client: httpx.AsyncClient):
         with respx.mock(base_url=OLLAMA_BASE) as mock:

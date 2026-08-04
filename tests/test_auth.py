@@ -183,6 +183,7 @@ class TestAuthEnabled:
         async with _make_client(self._auth_settings()) as ac:
             resp = await ac.get("/live-call")
         assert resp.status_code == 200
+        assert 'id="api-key"' in resp.text
 
     async def test_status_json_requires_auth_no_header(self):
         async with _make_client(self._auth_settings()) as ac:
