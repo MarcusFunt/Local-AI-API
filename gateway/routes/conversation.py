@@ -550,7 +550,8 @@ async def _handle_binary_frame(
 @router.get("/live-call", response_class=HTMLResponse)
 async def live_call_page() -> HTMLResponse:
     """Serve the built-in browser client for a private speech conversation."""
-    return HTMLResponse(_LIVE_CALL_HTML)
+    api_key_field = _LIVE_CALL_API_KEY_FIELD if settings.enable_api_key_auth else ""
+    return HTMLResponse(_LIVE_CALL_HTML.replace("<!-- API_KEY_FIELD -->", api_key_field))
 
 
 @router.websocket("/v1/audio/conversations")
@@ -641,3 +642,7 @@ def _load_live_call_html() -> str:
 
 
 _LIVE_CALL_HTML = _load_live_call_html()
+
+_LIVE_CALL_API_KEY_FIELD = """      <label class="key">API key
+        <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Required for this protected gateway; kept in this browser tab only">
+      </label>"""

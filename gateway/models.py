@@ -154,6 +154,48 @@ class ChatCompletionRequest(BaseModel):
         return self
 
 
+class AgentCompletionRequest(ChatCompletionRequest):
+    """A deliberately slower, multi-call completion request.
+
+    The advanced-agent surface remains separate from the OpenAI-compatible
+    fast path.  It shares the same message validation and model allow-list, but
+    does not claim to execute arbitrary client-supplied tools.
+    """
+
+    mode: Literal["graph", "mixture_of_experts"]
+    model: str = "agent"
+    stream: Literal[False] = False
+    max_tokens: int | None = Field(default=None, gt=0, le=4096)
+    max_completion_tokens: int | None = Field(default=None, gt=0, le=4096)
+    tools: None = None
+    tool_choice: None = None
+    parallel_tool_calls: None = None
+    response_format: None = None
+    stream_options: None = None
+    user: None = None
+    n: None = None
+    use_rag: Literal[False] = False
+    expert_models: list[str] = Field(default_factory=list, max_length=4)
+
+    @field_validator("expert_models")
+    @classmethod
+    def validate_expert_models(cls, value: list[str]) -> list[str]:
+        normalized = [model.strip() for model in value]
+        if any(not model for model in normalized):
+            raise ValueError("Expert model names must not be empty.")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("Expert model names must be unique.")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_agent_mode(self) -> "AgentCompletionRequest":
+        if self.mode == "graph" and self.expert_models:
+            raise ValueError("expert_models can only be used with mode='mixture_of_experts'.")
+        if self.mode == "mixture_of_experts" and self.expert_models and len(self.expert_models) < 2:
+            raise ValueError("mixture_of_experts requires at least two expert_models.")
+        return self
+
+
 class ChatCompletionUsage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
@@ -173,6 +215,23 @@ class ChatCompletionResponse(BaseModel):
     model: str
     choices: list[ChatCompletionChoice]
     usage: ChatCompletionUsage
+
+
+class AgentCompletionMetadata(BaseModel):
+    steps_completed: int
+    elapsed_ms: int
+    expert_models: list[str] | None = None
+
+
+class AgentCompletionResponse(BaseModel):
+    id: str
+    object: Literal["agent.completion"] = "agent.completion"
+    created: int
+    mode: Literal["graph", "mixture_of_experts"]
+    model: str
+    choices: list[ChatCompletionChoice]
+    usage: ChatCompletionUsage
+    metadata: AgentCompletionMetadata
 
 
 class ChatCompletionChunkDelta(BaseModel):

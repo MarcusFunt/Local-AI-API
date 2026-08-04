@@ -1167,12 +1167,18 @@
       `;
     }
 
-    function deriveRepoStatus(repository) {
+    function currentRepoStatus(repository) {
       if (!repository) return "unavailable";
       if (!repository.available) return "unavailable";
-      if (repository.status === "running" || repository.last_update?.status === "running") return "running";
-      if (["passed", "failed", "unavailable"].includes(repository.last_update?.status)) return repository.last_update.status;
       return repository.status ?? "idle";
+    }
+
+    function deriveRepoStatus(repository) {
+      const current = currentRepoStatus(repository);
+      if (["running", "failed", "unavailable"].includes(current)) return current;
+      if (repository.last_update?.status === "running") return "running";
+      if (["passed", "failed", "unavailable"].includes(repository.last_update?.status)) return repository.last_update.status;
+      return current;
     }
 
     function globalStatus(data) {
@@ -1241,8 +1247,11 @@
       const devModel = models.find((model) => model.alias === "dev");
       const check = data.last_dev_check;
       const repo = repositoryForDisplay(data);
-      const repoStatus = deriveRepoStatus(repo);
-      const repoUpdate = updateResult(repo);
+      const repoStatus = currentRepoStatus(repo);
+      const repoStatusLabel = repo?.dirty === true ? "Local changes" : repoStatus === "idle" ? "Ready" : titleCase(repoStatus);
+      const latestUpdateSummary = repo?.last_update?.status === "failed"
+        ? `Latest scheduled update failed: ${repo.last_update.error ?? "see Update"}`
+        : repo?.reason ?? "fast-forward only";
       const gateway = data.gateway ?? {};
       const autonomy = data.autonomy ?? {};
       const candidate = data.agent_zero_candidate ?? {};
@@ -1303,7 +1312,7 @@
         metric({
           title: "Repository",
           status: repoStatus,
-          statusLabel: repoUpdate[1].replace(/&hellip;/g, "...").replace(/&mdash;/g, "-"),
+          statusLabel: repoStatusLabel,
           rows: [
             ["Available", boolText(repo?.available)],
             ["Branch", repo?.branch ?? repo?.last_update?.branch ?? "--"],
@@ -1311,7 +1320,7 @@
             ["Upstream", repo?.upstream ?? "--"],
             ["Dirty", boolText(repo?.dirty)],
           ],
-          footerHtml: `<span class="muted">${escapeHtml(repo?.last_update?.error ?? repo?.reason ?? "fast-forward only")}</span>${tabLink("update", "Open Update ->")}`,
+          footerHtml: `<span class="muted">${escapeHtml(latestUpdateSummary)}</span>${tabLink("update", "Open Update ->")}`,
         }),
         metric({
           title: "Autonomous workspaces",
@@ -1324,7 +1333,7 @@
             ["Cockpit", autonomy.agent_zero_cockpit ? "enabled" : "disabled"],
             ["Candidate", candidate.status ?? "not run"],
           ],
-          footerHtml: `<span class="muted">${escapeHtml(autonomy.note ?? "")}</span>${autonomy.agent_zero_cockpit ? `<a class="action-link" href="${escapeHtml(autonomy.agent_zero_url)}">Open cockpit -></a>` : ""}`,
+          footerHtml: `<span class="muted">${escapeHtml(autonomy.note ?? "")}</span>${autonomy.agent_zero_cockpit ? `<a class="action-link" href="${escapeHtml(autonomy.agent_zero_cockpit_url ?? autonomy.agent_zero_url)}">Open cockpit -></a>` : ""}`,
         }),
         metric({
           title: "Runtime",
@@ -1401,10 +1410,10 @@
 
     function renderUpdate(data) {
       const repo = repositoryForDisplay(data);
-      const status = deriveRepoStatus(repo);
+      const status = currentRepoStatus(repo);
       const last = data.last_update_run;
       const resultStatus = last?.status === "failed" ? "failed" : "idle";
-      const resultLabel = last ? (last.status === "failed" ? "Scheduled update failed" : "Scheduled update passed") : "No scheduled update recorded";
+      const resultLabel = last ? (last.status === "failed" ? "Latest scheduled update failed" : "Latest scheduled update passed") : "No scheduled update recorded";
 
       els.repositoryStatusPill.outerHTML = pill(status, titleCase(status)).replace("<span", '<span id="repository-status-pill"');
       els.repositoryStatusPill = document.querySelector("#repository-status-pill");

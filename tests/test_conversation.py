@@ -69,6 +69,7 @@ async def test_live_call_page_is_available(client: httpx.AsyncClient):
     assert "Live Call" in resp.text
     assert "/v1/audio/conversations" in resp.text
     assert "MediaRecorder" in resp.text
+    assert 'id="api-key"' not in resp.text
 
 
 def test_conversation_happy_path(monkeypatch: pytest.MonkeyPatch):

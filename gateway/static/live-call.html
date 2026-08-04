@@ -48,9 +48,7 @@
         <select id="whisper" aria-describedby="whisper-hint"><option value="small">small</option><option value="base">base</option><option value="tiny">tiny</option></select>
         <span class="field-hint" id="whisper-hint">Overrides the gateway default for this call only.</span>
       </label>
-      <label class="key">API key (only when gateway auth is enabled)
-        <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Optional; kept in this browser tab only">
-      </label>
+      <!-- API_KEY_FIELD -->
     </form>
     <div class="controls"><button id="connect" type="button">Start call</button><span id="status" role="status">Not connected</span></div>
     <button id="talk" type="button" disabled>Hold to talk</button>
@@ -90,7 +88,7 @@
       }
 
       function apiKeyProtocol() {
-        const key = document.querySelector('#api-key').value;
+        const key = document.querySelector('#api-key')?.value;
         if (!key) return [];
         const encoded = btoa(unescape(encodeURIComponent(key))).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
         return [`local-ai-api-key.${encoded}`];

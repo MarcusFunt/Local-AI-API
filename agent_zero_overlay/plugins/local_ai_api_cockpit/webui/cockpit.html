@@ -1,4 +1,5 @@
-<html
+<!doctype html>
+<html lang="en"
   class="surface-modal local-ai-api-cockpit-modal modal-no-backdrop"
   data-surface-id="local-ai-api-cockpit"
   data-surface-modal-path="/plugins/local_ai_api_cockpit/webui/cockpit.html"
@@ -10,6 +11,9 @@
   data-canvas-dock-icon="dock_to_right"
 >
 <head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23101820'/%3E%3Cpath d='M8 9h16v14H8z' fill='none' stroke='%2370d8c4' stroke-width='3'/%3E%3Cpath d='M12 14h8M12 19h5' stroke='%2370d8c4' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
   <title>Disposable workspaces</title>
   <style>
     .local-ai-api-cockpit-body {
@@ -21,6 +25,7 @@
 
     .local-ai-api-cockpit {
       display: grid;
+      align-content: start;
       gap: 16px;
       min-height: 100%;
       padding: 20px;

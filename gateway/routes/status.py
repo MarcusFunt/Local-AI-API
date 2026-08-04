@@ -195,6 +195,7 @@ def _runtime_status() -> dict[str, Any]:
 def _autonomy_status() -> dict[str, Any]:
     """Expose configuration only; repo-ops remains an internal-only service."""
     enabled = os.environ.get("REPO_OPS_AUTONOMY_ENABLED", "false").lower() == "true"
+    agent_zero_url = f"http://127.0.0.1:{os.environ.get('AGENT_ZERO_PORT', '50080')}"
     try:
         storage_gib = min(20, max(1, int(os.environ.get("REPO_OPS_AUTONOMY_MAX_STORAGE_GIB", "20"))))
     except ValueError:
@@ -205,7 +206,8 @@ def _autonomy_status() -> dict[str, Any]:
         "max_runtime_hours": 24,
         "max_storage_gib": storage_gib,
         "agent_zero_cockpit": os.environ.get("AGENT_ZERO_COCKPIT_ENABLED", "false").lower() == "true",
-        "agent_zero_url": f"http://127.0.0.1:{os.environ.get('AGENT_ZERO_PORT', '50080')}",
+        "agent_zero_url": agent_zero_url,
+        "agent_zero_cockpit_url": f"{agent_zero_url}/plugins/local_ai_api_cockpit/webui/cockpit.html",
         "note": "Autonomous workspaces cannot push, merge, deploy, or access the source checkout.",
     }
 

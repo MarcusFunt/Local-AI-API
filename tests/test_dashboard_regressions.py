@@ -21,6 +21,10 @@ def test_status_dashboard_hides_empty_badges_and_explains_runtime_scope() -> Non
     assert "Swipe to see the remaining dashboard sections" in source
     assert "Swipe the table to view every column" in source
     assert 'if (repoStatus === "failed") return ["degraded", "Maintenance failure"]' in source
+    assert "function currentRepoStatus(repository)" in source
+    assert "Latest scheduled update failed" in source
+    assert 'const repoStatusLabel = repo?.dirty === true ? "Local changes"' in source
+    assert "agent_zero_cockpit_url ?? autonomy.agent_zero_url" in source
 
 
 def test_live_call_has_a_clear_empty_transcript_and_a_form_owned_api_key() -> None:
@@ -31,6 +35,8 @@ def test_live_call_has_a_clear_empty_transcript_and_a_form_owned_api_key() -> No
     assert 'id="transcript-empty"' in source
     assert "document.querySelector('#transcript-empty')?.remove();" in source
     assert "call-settings').addEventListener('submit'" in source
+    assert "<!-- API_KEY_FIELD -->" in source
+    assert "document.querySelector('#api-key')?.value" in source
 
 
 def test_cockpit_is_reactive_and_can_open_as_a_native_surface_modal() -> None:
@@ -58,3 +64,6 @@ def test_cockpit_is_reactive_and_can_open_as_a_native_surface_modal() -> None:
     assert "workspace.run_state === 'paused'" in modal
     assert "workspace.run_state === 'review_ready'" in modal
     assert "x-show=\"!embedded\"" in modal
+    assert '<meta name="viewport" content="width=device-width, initial-scale=1">' in modal
+    assert 'rel="icon"' in modal
+    assert "align-content: start;" in modal
