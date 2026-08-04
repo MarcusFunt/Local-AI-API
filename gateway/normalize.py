@@ -10,12 +10,17 @@ MODEL_MAP: dict[str, str] = {
     "agent-utility": "qwen3:8b",
 }
 
+EMBEDDING_MODEL_MAP: dict[str, str] = {
+    "embedding": "nomic-embed-text",
+}
+
 CORE_MODEL_ALIASES = ("main", "small", "dev")
 AGENT_ZERO_MODEL_ALIASES = ("agent", "agent-utility")
 REQUIRED_MODEL_ALIASES = CORE_MODEL_ALIASES + AGENT_ZERO_MODEL_ALIASES
 
 # Direct model tags that are always accepted (same values as map targets)
 _ALLOWED_DIRECT = set(MODEL_MAP.values())
+_ALLOWED_EMBEDDING_DIRECT = set(EMBEDDING_MODEL_MAP.values())
 
 _SAFE_PROVIDER_PREFIXES = ("openai/",)
 
@@ -47,7 +52,12 @@ def required_model_aliases() -> tuple[str, ...]:
 
 def allowed_model_ids() -> list[str]:
     ids: list[str] = []
-    for value in [*MODEL_MAP.keys(), *MODEL_MAP.values()]:
+    for value in [
+        *MODEL_MAP.keys(),
+        *MODEL_MAP.values(),
+        *EMBEDDING_MODEL_MAP.keys(),
+        *EMBEDDING_MODEL_MAP.values(),
+    ]:
         if value not in ids:
             ids.append(value)
     return ids
@@ -86,6 +96,43 @@ def resolve_model(requested: str, settings: Settings) -> str:
                     f"Model '{requested}' is not allowed. "
                     f"Allowed aliases: {list(MODEL_MAP)}. "
                     "Set ENABLE_ARBITRARY_MODELS=true to pass arbitrary model names."
+                ),
+                "type": "invalid_request_error",
+                "code": "model_not_found",
+            }
+        },
+    )
+
+
+def resolve_embedding_model(requested: str, settings: Settings) -> str:
+    """Resolve an embedding alias without widening the chat-model allow-list."""
+    requested = requested.strip()
+    if not requested:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": {
+                    "message": "Embedding model must not be empty.",
+                    "type": "invalid_request_error",
+                    "code": "model_not_found",
+                }
+            },
+        )
+
+    normalized = strip_safe_provider_prefix(requested)
+    if normalized in EMBEDDING_MODEL_MAP:
+        return EMBEDDING_MODEL_MAP[normalized]
+    if normalized in _ALLOWED_EMBEDDING_DIRECT:
+        return normalized
+    if settings.enable_arbitrary_models:
+        return normalized
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "error": {
+                "message": (
+                    f"Embedding model '{requested}' is not allowed. "
+                    f"Allowed aliases: {list(EMBEDDING_MODEL_MAP)}."
                 ),
                 "type": "invalid_request_error",
                 "code": "model_not_found",

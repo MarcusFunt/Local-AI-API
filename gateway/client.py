@@ -340,6 +340,46 @@ async def proxy_non_streaming(
     )
 
 
+async def proxy_embeddings(
+    resolved_model: str,
+    inputs: list[str],
+    settings: Settings,
+) -> list[list[float]]:
+    """Return vectors from Ollama's local embedding endpoint."""
+    client = _get_client()
+    logger.info("Sending embedding request to Ollama (model=%s inputs=%d)", resolved_model, len(inputs))
+    try:
+        response = await client.post(
+            "/api/embed",
+            json={"model": resolved_model, "input": inputs},
+        )
+    except httpx.TimeoutException as exc:
+        logger.warning("Ollama embedding request timed out: %s", exc)
+        raise _ollama_timeout_exception("Embedding request to Ollama timed out.") from exc
+    except httpx.ConnectError as exc:
+        logger.warning("Could not connect to Ollama for embeddings: %s", exc)
+        raise _ollama_connect_exception("Could not connect to Ollama for embeddings.") from exc
+
+    _raise_for_ollama_error(response)
+    try:
+        data = response.json()
+        vectors = data.get("embeddings") if isinstance(data, dict) else None
+        if not isinstance(vectors, list) or len(vectors) != len(inputs):
+            raise ValueError("Unexpected embedding count.")
+        normalized = [
+            [float(value) for value in vector]
+            for vector in vectors
+            if isinstance(vector, list) and vector
+        ]
+    except (TypeError, ValueError) as exc:
+        raise _ollama_invalid_response_exception(
+            "Ollama returned an invalid embedding response."
+        ) from exc
+    if len(normalized) != len(inputs):
+        raise _ollama_invalid_response_exception("Ollama returned an invalid embedding vector.")
+    return normalized
+
+
 async def proxy_streaming(
     resolved_model: str,
     request_dict: dict[str, Any],

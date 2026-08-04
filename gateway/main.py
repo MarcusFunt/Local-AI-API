@@ -23,6 +23,7 @@ from .routes.audio import router as audio_router
 from .routes.chat import router as chat_router
 from .routes.conversation import router as conversation_router
 from .routes.documents import router as documents_router
+from .routes.embeddings import router as embeddings_router
 from .routes.health import router as health_router
 from .routes.models import router as models_router
 from .routes.status import router as status_router
@@ -268,6 +269,7 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(chat_router)
+    app.include_router(embeddings_router)
     app.include_router(agents_router)
     app.include_router(models_router)
     app.include_router(audio_router)

@@ -7,10 +7,12 @@ from fastapi import HTTPException
 from gateway.config import Settings
 from gateway.normalize import (
     CHATTERBOX_MODEL_MAP,
+    EMBEDDING_MODEL_MAP,
     MODEL_MAP,
     WHISPER_MODEL_MAP,
     required_model_aliases,
     resolve_chatterbox_model,
+    resolve_embedding_model,
     resolve_model,
     resolve_whisper_model,
 )
@@ -167,3 +169,22 @@ class TestChatterboxModelMapping:
             resolve_chatterbox_model("other-tts", _settings())
         assert exc_info.value.status_code == 422
         assert exc_info.value.detail["error"]["code"] == "audio_model_not_found"
+
+
+class TestEmbeddingModelMapping:
+    def test_all_embedding_aliases_covered(self):
+        settings = _settings()
+        for alias, expected in EMBEDDING_MODEL_MAP.items():
+            assert resolve_embedding_model(alias, settings) == expected
+
+    def test_direct_embedding_tag_accepted(self):
+        assert resolve_embedding_model("nomic-embed-text", _settings()) == "nomic-embed-text"
+
+    def test_openai_prefixed_embedding_alias_resolves(self):
+        assert resolve_embedding_model("openai/embedding", _settings()) == "nomic-embed-text"
+
+    def test_chat_alias_is_rejected_by_embedding_endpoint(self):
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_embedding_model("main", _settings())
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"]["code"] == "model_not_found"

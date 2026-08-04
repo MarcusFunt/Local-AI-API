@@ -15,6 +15,9 @@ services:
       A0_SET__model_config__utility_model__provider: other
       A0_SET__model_config__utility_model__name: agent-utility
       A0_SET__model_config__utility_model__api_base: http://host.docker.internal:8080/v1
+      A0_SET__model_config__embedding_model__provider: huggingface
+      A0_SET__model_config__embedding_model__name: sentence-transformers/all-MiniLM-L6-v2
+      A0_SET__model_config__embedding_model__api_base: ""
       AGENT_ZERO_COCKPIT_ENABLED: ${AGENT_ZERO_COCKPIT_ENABLED:-false}
       GATEWAY_STATUS_URL: http://host.docker.internal:8080/status.json
       REPO_OPS_MCP_URL: http://repo-ops:8090/mcp
@@ -25,6 +28,7 @@ services:
       - -c
       - |
         /opt/venv-a0/bin/python - <<'PY'
+        import json
         import os
         from pathlib import Path
 
@@ -46,6 +50,42 @@ services:
                     rendered.append("")
                 rendered.append(f"API_KEY_OTHER={key}")
             env_path.write_text("\n".join(rendered).rstrip() + "\n", encoding="utf-8")
+
+        config_path = Path("/a0/usr/plugins/_model_config/config.json")
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+        except (OSError, json.JSONDecodeError):
+            config = {}
+        if not isinstance(config, dict):
+            config = {}
+        managed_models = {
+            "chat_model": {
+                "provider": "other",
+                "name": "agent",
+                "api_base": "http://host.docker.internal:8080/v1",
+            },
+            "utility_model": {
+                "provider": "other",
+                "name": "agent-utility",
+                "api_base": "http://host.docker.internal:8080/v1",
+            },
+            "embedding_model": {
+                "provider": "huggingface",
+                "name": "sentence-transformers/all-MiniLM-L6-v2",
+                "api_base": "",
+            },
+        }
+        for section, values in managed_models.items():
+            current = config.get(section, {})
+            if not isinstance(current, dict):
+                current = {}
+            current.update(values)
+            config[section] = current
+        config_path.write_text(
+            json.dumps(config, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
         PY
         exec /exe/initialize.sh "$${BRANCH:-main}"
     volumes:
