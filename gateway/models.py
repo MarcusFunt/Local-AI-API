@@ -11,6 +11,7 @@ _RESPONSE_FORMAT_TYPES = {"text", "json_object", "json_schema"}
 _SUPPORTED_CONTENT_PART_TYPES = {"text", "image_url"}
 MAX_CHAT_TEXT_CHARS = 100_000
 MAX_SPEECH_TEXT_CHARS = 10_000
+MAX_EMBEDDING_INPUTS = 128
 
 
 def validate_base64_image_url(value: Any) -> str:
@@ -232,6 +233,54 @@ class AgentCompletionResponse(BaseModel):
     choices: list[ChatCompletionChoice]
     usage: ChatCompletionUsage
     metadata: AgentCompletionMetadata
+
+
+class EmbeddingRequest(BaseModel):
+    """OpenAI-compatible embedding input limited to local text values."""
+
+    model: str = "embedding"
+    input: str | list[str]
+    user: str | None = None
+
+    @field_validator("model")
+    @classmethod
+    def validate_embedding_model(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Model must not be empty.")
+        return value
+
+    @field_validator("input")
+    @classmethod
+    def validate_embedding_input(cls, value: str | list[str]) -> str | list[str]:
+        values = [value] if isinstance(value, str) else value
+        if not values:
+            raise ValueError("Embedding input must not be empty.")
+        if len(values) > MAX_EMBEDDING_INPUTS:
+            raise ValueError(f"Embedding input must contain at most {MAX_EMBEDDING_INPUTS} texts.")
+        if any(not isinstance(item, str) or not item for item in values):
+            raise ValueError("Embedding input must contain non-empty text strings.")
+        if any(len(item) > MAX_CHAT_TEXT_CHARS for item in values):
+            raise ValueError(f"Embedding input texts must not exceed {MAX_CHAT_TEXT_CHARS} characters.")
+        return value
+
+
+class EmbeddingData(BaseModel):
+    object: Literal["embedding"] = "embedding"
+    embedding: list[float]
+    index: int
+
+
+class EmbeddingUsage(BaseModel):
+    prompt_tokens: int = 0
+    total_tokens: int = 0
+
+
+class EmbeddingResponse(BaseModel):
+    object: Literal["list"] = "list"
+    data: list[EmbeddingData]
+    model: str
+    usage: EmbeddingUsage
 
 
 class ChatCompletionChunkDelta(BaseModel):

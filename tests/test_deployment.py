@@ -132,7 +132,7 @@ def test_compose_source_keeps_ollama_models_fallback_expression():
     compose_source = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
 
     assert (
-        'models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b}"'
+        'models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b nomic-embed-text}"'
         in compose_source
     )
 

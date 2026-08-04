@@ -67,6 +67,7 @@ async def client(default_settings: Settings, monkeypatch: pytest.MonkeyPatch):
     import gateway.routes.chat as chat_module
     import gateway.routes.audio as audio_module
     import gateway.routes.conversation as conversation_module
+    import gateway.routes.embeddings as embeddings_module
     import gateway.routes.status as status_module
     import gateway.client as client_module
 
@@ -76,6 +77,7 @@ async def client(default_settings: Settings, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(agents_module, "settings", default_settings)
     monkeypatch.setattr(audio_module, "settings", default_settings)
     monkeypatch.setattr(conversation_module, "settings", default_settings)
+    monkeypatch.setattr(embeddings_module, "settings", default_settings)
     monkeypatch.setattr(status_module, "settings", default_settings)
     status_module._STATUS_CHECK_LAST.clear()
 
