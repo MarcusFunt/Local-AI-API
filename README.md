@@ -870,16 +870,20 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 ## Running tests
 
+All validation runs locally; this repository deliberately does not use GitHub
+Actions or GitHub-hosted Linux runners.
+
 Tests use `respx` to mock all Ollama HTTP calls — no live Ollama is needed.
 
 ```bash
-pytest tests/ -v --cov=gateway
+python -m pytest tests/ -v --cov=gateway
+python -m compileall gateway
 ```
 
 To see coverage report:
 
 ```bash
-pytest tests/ -v --cov=gateway --cov-report=term-missing
+python -m pytest tests/ -v --cov=gateway --cov-report=term-missing
 ```
 
 ---
