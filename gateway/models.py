@@ -184,8 +184,6 @@ class AgentCompletionRequest(ChatCompletionRequest):
         normalized = [model.strip() for model in value]
         if any(not model for model in normalized):
             raise ValueError("Expert model names must not be empty.")
-        if len(set(normalized)) != len(normalized):
-            raise ValueError("Expert model names must be unique.")
         return normalized
 
     @model_validator(mode="after")

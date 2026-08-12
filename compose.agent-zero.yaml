@@ -12,9 +12,11 @@ services:
       A0_SET__model_config__chat_model__provider: other
       A0_SET__model_config__chat_model__name: agent
       A0_SET__model_config__chat_model__api_base: http://host.docker.internal:8080/v1
+      A0_SET__model_config__chat_model__ctx_length: "4096"
       A0_SET__model_config__utility_model__provider: other
-      A0_SET__model_config__utility_model__name: agent-utility
+      A0_SET__model_config__utility_model__name: agent
       A0_SET__model_config__utility_model__api_base: http://host.docker.internal:8080/v1
+      A0_SET__model_config__utility_model__ctx_length: "4096"
       A0_SET__model_config__embedding_model__provider: huggingface
       A0_SET__model_config__embedding_model__name: sentence-transformers/all-MiniLM-L6-v2
       A0_SET__model_config__embedding_model__api_base: ""
@@ -64,11 +66,15 @@ services:
                 "provider": "other",
                 "name": "agent",
                 "api_base": "http://host.docker.internal:8080/v1",
+                "ctx_length": 4096,
+                "ctx_history": 0.7,
             },
             "utility_model": {
                 "provider": "other",
-                "name": "agent-utility",
+                "name": "agent",
                 "api_base": "http://host.docker.internal:8080/v1",
+                "ctx_length": 4096,
+                "ctx_input": 0.7,
             },
             "embedding_model": {
                 "provider": "huggingface",

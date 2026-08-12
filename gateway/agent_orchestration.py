@@ -7,6 +7,7 @@ model allow-list, timeout, auth, and OpenAI-to-Ollama translation paths.
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -27,9 +28,16 @@ from .normalize import resolve_model
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_EXPERT_MODELS = ("main", "agent-utility", "agent")
-_MAX_STAGE_CONTEXT_CHARS = 12_000
-_DEFAULT_STAGE_MAX_TOKENS = 4096
+# The deployed qwen3:14b profile has a 4,096-token Ollama context window on
+# this hardware. Keep every deliberation pass on that model and leave enough
+# room for the finalizer to consume the complete set of concise work products.
+_DEFAULT_EXPERT_MODELS = ("agent", "agent", "agent")
+_MAX_STAGE_CONTEXT_CHARS = 2_000
+_INTERNAL_STAGE_MAX_TOKENS = 512
+_FINAL_STAGE_MAX_TOKENS = 1_536
+_THINKING_BLOCK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+_THINKING_TAG_RE = re.compile(r"</?think>", re.IGNORECASE)
+_FINAL_LABEL_RE = re.compile(r"^\s*final answer\s*:\s*", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -46,17 +54,35 @@ def _bounded(value: str) -> str:
     return value[:_MAX_STAGE_CONTEXT_CHARS] + "\n[Work product truncated]"
 
 
+def _stage_max_tokens(request: AgentCompletionRequest, ceiling: int) -> int:
+    """Respect a caller's smaller limit while protecting the 4k shared context."""
+    requested = request.max_tokens
+    if requested is None:
+        requested = request.max_completion_tokens
+    return ceiling if requested is None else min(requested, ceiling)
+
+
+def _clean_final_answer(content: str) -> str:
+    """Remove Qwen thinking markup and the internal finalizer label from user output."""
+    cleaned = _THINKING_BLOCK_RE.sub("", content)
+    cleaned = _THINKING_TAG_RE.sub("", cleaned)
+    cleaned = _FINAL_LABEL_RE.sub("", cleaned)
+    return cleaned.strip()
+
+
 def _request_dict(
     request: AgentCompletionRequest,
     messages: list[ChatMessage],
     *,
     temperature: float | None = None,
+    max_tokens: int | None = None,
 ) -> dict[str, object]:
-    max_tokens = request.max_tokens
     if max_tokens is None:
-        max_tokens = request.max_completion_tokens
-    if max_tokens is None:
-        max_tokens = _DEFAULT_STAGE_MAX_TOKENS
+        max_tokens = request.max_tokens
+        if max_tokens is None:
+            max_tokens = request.max_completion_tokens
+        if max_tokens is None:
+            max_tokens = _FINAL_STAGE_MAX_TOKENS
     return {
         "messages": [message.model_dump() for message in messages],
         "temperature": request.temperature if temperature is None else temperature,
@@ -92,6 +118,7 @@ async def _run_stage(
     *,
     work_products: list[tuple[str, str]] | None = None,
     temperature: float | None = None,
+    max_tokens: int | None = None,
 ) -> _StageResult:
     completion = await ollama_client.proxy_non_streaming(
         resolved_model,
@@ -99,6 +126,7 @@ async def _run_stage(
             request,
             _stage_messages(request, instruction, work_products),
             temperature=temperature,
+            max_tokens=max_tokens,
         ),
         settings,
     )
@@ -134,6 +162,7 @@ async def _run_graph(
         settings,
         "You are the planner in a deliberate agent graph. Identify the task, constraints, "
         "unknowns, and a concise plan. Do not write the final answer.",
+        max_tokens=_stage_max_tokens(request, _INTERNAL_STAGE_MAX_TOKENS),
     )
     draft = await _run_stage(
         resolved_model,
@@ -142,6 +171,7 @@ async def _run_graph(
         "You are the execution node in a deliberate agent graph. Produce a technically "
         "sound draft answer using the supplied plan. State assumptions that affect the result.",
         work_products=[("Planner work product", plan.content)],
+        max_tokens=_stage_max_tokens(request, _INTERNAL_STAGE_MAX_TOKENS),
     )
     critique = await _run_stage(
         resolved_model,
@@ -151,6 +181,7 @@ async def _run_graph(
         "gaps, missed constraints, unsafe advice, and unclear reasoning. Give concrete corrections.",
         work_products=[("Planner work product", plan.content), ("Draft work product", draft.content)],
         temperature=0.2,
+        max_tokens=_stage_max_tokens(request, _INTERNAL_STAGE_MAX_TOKENS),
     )
     final = await _run_stage(
         resolved_model,
@@ -164,6 +195,7 @@ async def _run_graph(
             ("Draft work product", draft.content),
             ("Review work product", critique.content),
         ],
+        max_tokens=_stage_max_tokens(request, _FINAL_STAGE_MAX_TOKENS),
     )
     return final, [plan, draft, critique, final]
 
@@ -190,8 +222,8 @@ async def _run_expert_ensemble(
     completed: list[_StageResult] = []
     last_failure: HTTPException | None = None
 
-    # Sequential execution is intentional: this is a performance mode and avoids
-    # needlessly loading several large local models at the same time.
+    # Sequential execution keeps the 14B quality model resident rather than
+    # competing for the single local GPU's memory window.
     for index, expert_model in enumerate(expert_models):
         try:
             result = await _run_stage(
@@ -200,6 +232,7 @@ async def _run_expert_ensemble(
                 settings,
                 "You are one specialist in a mixture-of-experts ensemble. " + roles[index % len(roles)],
                 temperature=_expert_temperature(request, index),
+                max_tokens=_stage_max_tokens(request, _INTERNAL_STAGE_MAX_TOKENS),
             )
         except HTTPException as exc:
             logger.warning("Expert stage failed (model=%s status=%s)", expert_model, exc.status_code)
@@ -222,6 +255,7 @@ async def _run_expert_ensemble(
         "disagreements, retain uncertainty where needed, and do not mention the internal workflow.",
         work_products=opinions,
         temperature=0.2,
+        max_tokens=_stage_max_tokens(request, _FINAL_STAGE_MAX_TOKENS),
     )
     completed.append(final)
     return final, completed
@@ -257,7 +291,7 @@ async def run_agent(
         choices=[
             ChatCompletionChoice(
                 index=0,
-                message=ChatMessage(role="assistant", content=final.content),
+                message=ChatMessage(role="assistant", content=_clean_final_answer(final.content)),
                 finish_reason=final.finish_reason,
             )
         ],
