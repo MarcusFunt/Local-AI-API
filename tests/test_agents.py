@@ -7,6 +7,8 @@ import httpx
 import pytest
 import respx
 
+from gateway.models import AgentCompletionRequest
+
 OLLAMA_BASE = "http://127.0.0.1:11434"
 
 pytestmark = pytest.mark.asyncio
@@ -60,7 +62,7 @@ class TestAdvancedAgents:
         assert [item["model"] for item in captured] == ["qwen3:14b"] * 4
         assert "planner" in captured[0]["messages"][0]["content"].lower()
         assert "Review work product" in captured[3]["messages"][-1]["content"]
-        assert captured[0]["options"]["num_predict"] == 4096
+        assert [item["options"]["num_predict"] for item in captured] == [512, 512, 512, 1536]
 
     async def test_expert_ensemble_uses_selected_experts_then_synthesizes(
         self,
@@ -96,6 +98,103 @@ class TestAdvancedAgents:
         assert body["metadata"]["expert_models"] == ["qwen3.5:9b", "qwen3.5:4b"]
         assert [item["model"] for item in captured] == ["qwen3.5:9b", "qwen3.5:4b", "qwen3:14b"]
         assert "Specialist 1 work product" in captured[2]["messages"][-2]["content"]
+        assert [item["options"]["num_predict"] for item in captured] == [512, 512, 1536]
+
+    async def test_default_experts_use_the_14b_quality_model(
+        self,
+        client: httpx.AsyncClient,
+    ) -> None:
+        captured: list[dict[str, object]] = []
+        responses = iter(["first", "second", "third", "synthesis"])
+
+        async def capture(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(request.content)
+            captured.append(payload)
+            return httpx.Response(
+                200,
+                json=_ollama_response(next(responses), model=payload["model"]),
+            )
+
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(side_effect=capture)
+            response = await client.post(
+                "/v1/agent/completions",
+                json={
+                    "mode": "mixture_of_experts",
+                    "messages": [{"role": "user", "content": "Compare the options."}],
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["metadata"]["expert_models"] == ["qwen3:14b"] * 3
+        assert [item["model"] for item in captured] == ["qwen3:14b"] * 4
+
+    async def test_graph_bounds_each_work_product_for_the_final_context(
+        self,
+        client: httpx.AsyncClient,
+    ) -> None:
+        captured: list[dict[str, object]] = []
+        responses = iter(["p" * 10_000, "d" * 10_000, "c" * 10_000, "final answer"])
+
+        async def capture(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(request.content)
+            captured.append(payload)
+            return httpx.Response(
+                200,
+                json=_ollama_response(next(responses), model=payload["model"]),
+            )
+
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(side_effect=capture)
+            response = await client.post(
+                "/v1/agent/completions",
+                json={
+                    "mode": "graph",
+                    "messages": [{"role": "user", "content": "Solve this carefully."}],
+                },
+            )
+
+        assert response.status_code == 200
+        final_work_products = [message["content"] for message in captured[3]["messages"][2:]]
+        assert len(final_work_products) == 3
+        assert all(len(content) <= 2_100 for content in final_work_products)
+        assert all(content.endswith("[Work product truncated]") for content in final_work_products)
+
+    async def test_final_answer_strips_qwen_reasoning_artifacts(
+        self,
+        client: httpx.AsyncClient,
+    ) -> None:
+        responses = iter(["plan", "draft", "critique", "Final answer:\n</think>\n\n4"])
+
+        async def capture(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=_ollama_response(next(responses), model="qwen3:14b"),
+            )
+
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(side_effect=capture)
+            response = await client.post(
+                "/v1/agent/completions",
+                json={
+                    "mode": "graph",
+                    "messages": [{"role": "user", "content": "What is 2 plus 2?"}],
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["choices"][0]["message"]["content"] == "4"
+
+    async def test_accepts_repeated_14b_experts_for_self_critique(self) -> None:
+        request = AgentCompletionRequest.model_validate(
+            {
+                "mode": "mixture_of_experts",
+                "expert_models": ["agent", "agent"],
+                "messages": [{"role": "user", "content": "Hi"}],
+            }
+        )
+
+        assert request.expert_models == ["agent", "agent"]
 
     async def test_rejects_streaming_tools_and_bad_expert_models(
         self,

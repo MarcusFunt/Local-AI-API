@@ -237,7 +237,10 @@ def test_agent_zero_compose_publishes_ui_only_on_loopback():
         agent_zero["environment"]["A0_SET__model_config__chat_model__api_base"]
         == "http://host.docker.internal:8080/v1"
     )
-    assert agent_zero["environment"]["A0_SET__model_config__utility_model__name"] == "agent-utility"
+    assert agent_zero["environment"]["A0_SET__model_config__utility_model__name"] == "agent"
+    assert agent_zero["environment"]["A0_SET__model_config__chat_model__ctx_length"] == "4096"
+    assert agent_zero["environment"]["A0_SET__model_config__utility_model__ctx_length"] == "4096"
+    assert '"ctx_length": 4096' in agent_zero["command"][2]
     assert agent_zero["ports"] == [
         {
             "host_ip": "127.0.0.1",

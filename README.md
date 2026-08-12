@@ -14,7 +14,7 @@ A private, lightweight OpenAI-compatible gateway for [Ollama](https://ollama.com
 - Translates Ollama's response format back to the OpenAI envelope
 - Supports both streaming (`stream: true`) and non-streaming responses
 - Accepts `POST /v1/embeddings` for the local `embedding` (`nomic-embed-text`) profile
-- Offers opt-in, performance-first multi-call agents at `POST /v1/agent/completions`
+- Offers opt-in, quality-first multi-call agents at `POST /v1/agent/completions`
 - Accepts `POST /v1/audio/transcriptions` requests using local Whisper models
 - Accepts `POST /v1/audio/speech` requests using local Chatterbox TTS
 - Provides health endpoints at `GET /health`, `GET /health/ollama`, and `GET /health/qdrant`
@@ -44,7 +44,7 @@ Tailscale Serve acts as the TLS terminator and access-control layer. The gateway
 
 ---
 
-## Performance-first agents
+## Quality-first agents
 
 `POST /v1/agent/completions` is a deliberate, non-streaming surface for tasks
 where a better answer is worth several model calls. It is stateless and uses
@@ -56,15 +56,19 @@ client-supplied tools or enable arbitrary model names.
   drafter → critic → finalizer. It uses the `agent` profile by default.
 - `mode: "mixture_of_experts"` obtains independent specialist opinions, then
   lets the selected `model` synthesize a final answer. By default, it uses
-  `main`, `agent-utility`, and `agent` as specialists. Supply two to four
-  unique `expert_models` aliases to control that ensemble.
+  three independent `agent` (`qwen3:14b`) passes with distinct roles and
+  temperatures. Supply two to four `expert_models` aliases to override that
+  ensemble; repeated `agent` aliases are supported for self-critique.
 
 The graph always makes four calls. The expert mode makes one call per
 specialist plus a final synthesis call; its specialists are intentionally
-sequential so a local machine does not have to load several large models at
-once. Per-stage output is limited to 4,096 tokens and intermediate drafts are
-not returned to the caller. The response reports aggregate token use and the
-number of completed stages in `metadata`.
+sequential so the 14B quality model remains resident on the local GPU. Planner,
+draft, critic, and expert outputs are each capped at 512 tokens and retained as
+at most 2,000 characters. Final synthesis is capped at 1,536 tokens. These
+limits keep the complete deliberation inside the deployed 4,096-token Ollama
+context window. Intermediate drafts are not returned to the caller. The
+response reports aggregate token use and the number of completed stages in
+`metadata`.
 
 ```bash
 curl http://127.0.0.1:8080/v1/agent/completions \
@@ -81,7 +85,7 @@ curl http://127.0.0.1:8080/v1/agent/completions \
   -d '{
     "mode": "mixture_of_experts",
     "model": "agent",
-    "expert_models": ["main", "agent-utility"],
+    "expert_models": ["agent", "agent", "agent"],
     "messages": [{"role": "user", "content": "Compare these architecture options."}]
   }'
 ```
@@ -281,7 +285,10 @@ adds `qwen3:14b` and `qwen3:8b` to `OLLAMA_MODELS`, starts Agent Zero on
 `https://<machine>.ts.net:8443/` when Tailscale is available.
 
 Agent Zero is configured to use this gateway's `/v1` OpenAI-compatible API with
-the `agent` and `agent-utility` model aliases. Do not use Agent Zero's public
+the `agent` (`qwen3:14b`) model for both chat and utility work. Both Agent Zero
+contexts are aligned to the deployed 4,096-token Ollama window. The
+`agent-utility` alias remains available for compatible external clients but is
+not selected by this quality-first profile. Do not use Agent Zero's public
 Remote Link, Cloudflare Tunnel, Tailscale Funnel, or Microsoft Dev Tunnels in
 this project; keep access private through Tailscale Serve. When the gateway
 `API_KEY` is set, the Agent Zero Docker override writes it into Agent Zero's
