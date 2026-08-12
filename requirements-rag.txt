@@ -1,4 +1,7 @@
-llama-index-core>=0.11
-llama-index-vector-stores-qdrant>=0.4
-llama-index-readers-file>=0.3
-qdrant-client>=1.9
+# Pinned together after exercising the RAG contract suite with the gateway's
+# Pydantic 2.9 baseline. Keeping the set explicit avoids expensive resolver
+# backtracking into newer LlamaIndex releases that require a newer Pydantic.
+llama-index-core==0.12.42
+llama-index-vector-stores-qdrant==0.6.1
+llama-index-readers-file==0.4.11
+qdrant-client==1.19.0
