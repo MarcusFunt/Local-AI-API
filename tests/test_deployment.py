@@ -54,7 +54,7 @@ def _compose_config(files: list[str], env_overrides: dict[str, str] | None = Non
     # Compose reads the repository's private .env file independently of this
     # process environment. Pin the documented default here so tests of default
     # deployment behavior do not inherit a developer's custom model list.
-    env["OLLAMA_MODELS"] = "qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b"
+    env["OLLAMA_MODELS"] = "qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b"
     if env_overrides:
         env.update(env_overrides)
 
@@ -119,7 +119,7 @@ def test_gateway_keeps_ollama_loopback_and_shared_namespace(files: list[str]):
     assert model_init["network_mode"] == "service:ollama"
     assert model_init["entrypoint"][:2] == ["/bin/sh", "-c"]
     assert (
-        'models="qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b"'
+        'models="qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b"'
         in model_init["entrypoint"][2]
     )
     assert "for model in $$models; do" in model_init["entrypoint"][2]
@@ -132,7 +132,7 @@ def test_compose_source_keeps_ollama_models_fallback_expression():
     compose_source = (REPO_ROOT / "compose.yaml").read_text(encoding="utf-8")
 
     assert (
-        'models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b nomic-embed-text}"'
+        'models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b nomic-embed-text}"'
         in compose_source
     )
 
@@ -165,6 +165,21 @@ def test_external_runtime_images_are_digest_pinned():
     assert "QDRANT_IMAGE:-qdrant/qdrant@sha256:" in qdrant
     assert "AGENT_ZERO_BASE_IMAGE=agent0ai/agent-zero@sha256:" in agent_zero
     assert "PyYAML==6.0.2" in agent_zero
+
+
+def test_qdrant_healthcheck_does_not_require_a_missing_http_client():
+    qdrant = (REPO_ROOT / "compose.qdrant.yaml").read_text(encoding="utf-8")
+
+    assert "/dev/tcp/127.0.0.1/6333" in qdrant
+    assert "curl -sf" not in qdrant
+
+
+def test_gateway_image_includes_repo_ops_search_and_optional_rag_reranker():
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    rag_requirements = (REPO_ROOT / "requirements-rag.txt").read_text(encoding="utf-8")
+
+    assert "ripgrep" in dockerfile
+    assert "fastembed==0.8.0" in rag_requirements
 
 
 def test_agent_zero_models_are_pulled_with_custom_ollama_models():
@@ -231,6 +246,9 @@ def test_agent_zero_compose_publishes_ui_only_on_loopback():
     assert "API_KEY_OTHER" in agent_zero["command"][2]
     assert "/a0/usr/.env" in agent_zero["command"][2]
     assert 'exec /exe/initialize.sh "$${BRANCH:-main}"' in agent_zero["command"][2]
+    assert "seed_tree" in agent_zero["command"][2]
+    assert "/opt/local-ai-api-quality/profiles" in agent_zero["command"][2]
+    assert "/opt/local-ai-api-quality/projects" in agent_zero["command"][2]
     assert agent_zero["environment"]["A0_SET__model_config__chat_model__provider"] == "other"
     assert agent_zero["environment"]["A0_SET__model_config__chat_model__name"] == "agent"
     assert (
@@ -238,9 +256,9 @@ def test_agent_zero_compose_publishes_ui_only_on_loopback():
         == "http://host.docker.internal:8080/v1"
     )
     assert agent_zero["environment"]["A0_SET__model_config__utility_model__name"] == "agent"
-    assert agent_zero["environment"]["A0_SET__model_config__chat_model__ctx_length"] == "4096"
-    assert agent_zero["environment"]["A0_SET__model_config__utility_model__ctx_length"] == "4096"
-    assert '"ctx_length": 4096' in agent_zero["command"][2]
+    assert agent_zero["environment"]["A0_SET__model_config__chat_model__ctx_length"] == "8192"
+    assert agent_zero["environment"]["A0_SET__model_config__utility_model__ctx_length"] == "8192"
+    assert '"ctx_length": int(os.environ.get("AGENT_CONTEXT_LENGTH", "8192"))' in agent_zero["command"][2]
     assert agent_zero["ports"] == [
         {
             "host_ip": "127.0.0.1",

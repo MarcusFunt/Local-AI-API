@@ -25,6 +25,7 @@ RUN python -m pip install --upgrade pip && \
     python -m playwright install --with-deps chromium
 
 COPY repo_ops ./repo_ops
+COPY agent_learning ./agent_learning
 
 RUN groupadd --system repoops && \
     useradd --system --gid repoops --home-dir /home/repoops --create-home --shell /usr/sbin/nologin repoops && \

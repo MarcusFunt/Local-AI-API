@@ -53,8 +53,10 @@ gateway uses Ollama's separate network namespace and cannot reach it.
    only UI audit: a workspace-only screenshot plus accessibility and timing evidence.
 4. Record each hypothesis and outcome with `record_experiment`, so later task
    runs can read `experiment_history` instead of repeating failed ideas.
-5. Return `git_diff` and `task_report` for review. A human reviews and merges
-   the reported branch; the worker has no commit, push, merge, or deploy tool.
+5. Return `git_diff` and `task_report` for review. The worker has no commit,
+   push, merge, or deploy tool. Its experiment records are also mirrored into a
+   redacted, host-backed learning ledger so successful and failed approaches can
+   inform later isolated runs.
 
 For long-running work, call `workspace_status` or `workspace_health`, renew a
 lease deliberately with `renew_workspace_lease`, and use `pause_workspace` for
@@ -73,6 +75,25 @@ rebuild the worker; do not give it write access to `/source`.
 
 See [autonomous workspaces](autonomous-workspaces.md) for the bounded local
 evaluation loop, the unnetworked preview worker, and the Agent Zero cockpit.
+
+## Fully gated local promotion
+
+`repo-ops` itself remains unable to alter the source checkout. A separate
+trusted local operator can verify a version-1 candidate manifest and promote a
+patch only when every named check, private quality gate, public evaluation gate,
+and dependency/security evidence is fresh and passing:
+
+```bash
+python scripts/promote_agent_candidate.py --candidate /path/to/candidate.json
+python scripts/promote_agent_candidate.py --candidate /path/to/candidate.json --apply
+```
+
+The first command is verification-only. `--apply` requires a clean local
+`main` checkout at the candidate base revision, re-runs the named checks in a
+temporary worktree, creates an `auto-promote/<candidate>-before` rollback tag,
+then fast-forwards local `main`. It never pushes, opens a pull request, changes
+credentials, or restarts the stack. Its ignored audit trail is stored under
+`.local/agent-learning`.
 
 ## Open-catalog skill quarantine
 

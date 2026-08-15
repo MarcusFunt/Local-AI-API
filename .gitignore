@@ -14,7 +14,15 @@ htmlcov/
 
 # GUI installer state and local runtime logs.
 .local/
+quality/cases.private.json
+quality/reports/
 logs/
+
+# Downloaded public benchmark sources, generated answers, and immutable local
+# reports. Source revisions and artifact schema are committed in evals/.
+.local/eval-cache/
+.local/eval-results/
+.local/agent-learning/
 
 # Local bootstrap identity files copied onto removable media.
 authorized_keys

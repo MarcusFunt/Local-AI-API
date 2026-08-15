@@ -23,7 +23,7 @@ FALLBACK_MODEL_MAP = {
     "small": "qwen3.5:4b",
     "dev": "qwen3.5:0.8b",
     "agent": "qwen3:14b",
-    "agent-utility": "qwen3:8b",
+    "agent-utility": "qwen3:14b",
 }
 FALLBACK_WHISPER_MODEL_MAP: dict[str, str | None] = {
     "none": None,

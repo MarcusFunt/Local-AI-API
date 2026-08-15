@@ -16,14 +16,13 @@ shrinks on its own.
 | `qwen3.5:0.8b` (`dev`) | ~1.0 GB |
 | `qwen3.5:4b` (`small`) | ~3.4 GB |
 | `qwen3.5:9b` (`main`) | ~6.6 GB |
-| `qwen3:8b` (`agent-utility`) | ~5.2 GB |
 | `qwen3:14b` (`agent`) | ~9.3 GB |
-| All five default models | ~25.5 GB |
+| Four default models | ~20.3 GB |
 | Whisper + Chatterbox model cache | ~1–2 GB |
 
 Rough totals:
 
-- **Default full stack (all five models + Agent Zero + audio):** ~50–60 GB.
+- **Default full stack (four models + Agent Zero + audio):** ~45–55 GB.
 - **Low Compute Mode (`qwen3.5:0.8b` only, CPU-only image, audio):** ~15–20 GB.
 
 If you are tight on space, use [Low Compute Mode](../README.md#low-compute-mode)
@@ -41,7 +40,7 @@ docker exec local-ai-api-ollama-1 ollama list   # pulled models and their sizes
 Remove models you don't use (they re-download on demand):
 
 ```bash
-docker exec local-ai-api-ollama-1 ollama rm qwen3:14b qwen3:8b
+docker exec local-ai-api-ollama-1 ollama rm qwen3:14b
 ```
 
 Remove dangling build cache and unused images:

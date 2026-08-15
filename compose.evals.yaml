@@ -1,0 +1,55 @@
+services:
+  eval-runner:
+    image: local-ai-api-evals:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile.evals
+    profiles: ["evals"]
+    network_mode: service:ollama
+    environment:
+      EVAL_GATEWAY_URL: http://127.0.0.1:8080
+      EVAL_CACHE_DIR: /cache/sources
+      EVAL_RESULTS_DIR: /results
+      EVAL_RESULTS_VOLUME: ${COMPOSE_PROJECT_NAME:-local-ai-api}_eval-results
+      EVAL_SANDBOX_IMAGE: local-ai-api-evals:1.0.0
+      GATEWAY_API_KEY: ${API_KEY:-}
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+        read_only: true
+      - eval-cache:/cache
+      - eval-results:/results
+      # Needed only to start an isolated child container for EvalPlus. The child
+      # receives no socket, repository mount, or network.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  eval-scheduler:
+    image: local-ai-api-evals:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile.evals
+    profiles: ["eval-scheduler"]
+    network_mode: service:ollama
+    restart: unless-stopped
+    entrypoint: ["python", "/workspace/scripts/eval_scheduler.py"]
+    environment:
+      EVAL_GATEWAY_URL: http://127.0.0.1:8080
+      EVAL_CACHE_DIR: /cache/sources
+      EVAL_RESULTS_DIR: /results
+      EVAL_RESULTS_VOLUME: ${COMPOSE_PROJECT_NAME:-local-ai-api}_eval-results
+      EVAL_SANDBOX_IMAGE: local-ai-api-evals:1.0.0
+      EVAL_INTERVAL_SECONDS: ${EVAL_INTERVAL_SECONDS:-86400}
+      GATEWAY_API_KEY: ${API_KEY:-}
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+        read_only: true
+      - eval-cache:/cache
+      - eval-results:/results
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  eval-cache:
+  eval-results:

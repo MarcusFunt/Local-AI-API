@@ -67,6 +67,26 @@ def test_agent_zero_enabled_is_forced_true():
     assert settings.agent_zero_enabled is True
 
 
+def test_zero_request_timeout_means_no_upstream_deadline():
+    settings = Settings(request_timeout_seconds=0)
+    assert settings.request_timeout_seconds == 0
+
+
+def test_negative_request_timeout_is_rejected():
+    with pytest.raises(ValidationError):
+        Settings(request_timeout_seconds=-1)
+
+
+def test_quality_context_requires_a_safe_minimum():
+    with pytest.raises(ValidationError):
+        Settings(quality_context_tokens=2048)
+
+
+def test_agent_policy_version_must_not_be_empty():
+    with pytest.raises(ValidationError):
+        Settings(agent_policy_version=" ")
+
+
 def test_invalid_default_whisper_model_is_rejected():
     with pytest.raises(ValidationError):
         Settings(default_whisper_model="large")

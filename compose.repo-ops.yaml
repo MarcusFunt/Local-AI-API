@@ -15,6 +15,7 @@ services:
       # GitNexus labels the clone by the read-only /source mount origin.
       REPO_OPS_GITNEXUS_REPO: source
       REPO_OPS_ARCHIVE_ROOT: /archives
+      REPO_OPS_LEARNING_ROOT: /archives/learning
       REPO_OPS_ACTIVE_LEASE_HOURS: ${REPO_OPS_ACTIVE_LEASE_HOURS:-24}
       REPO_OPS_WORKSPACE_TTL_DAYS: ${REPO_OPS_WORKSPACE_TTL_DAYS:-7}
       REPO_OPS_ARCHIVE_TTL_DAYS: ${REPO_OPS_ARCHIVE_TTL_DAYS:-14}

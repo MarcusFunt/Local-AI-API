@@ -9,14 +9,18 @@ services:
     restart: unless-stopped
     environment:
       API_KEY_OTHER: ${API_KEY:-unused}
+      # Agent Zero's normal profile exceeds the usable prompt budget of the
+      # local 8k model. This dedicated profile keeps only the operational
+      # tools that fit reliably beside a 14B model's strict JSON contract.
+      A0_SET_agent_profile: agent0
       A0_SET__model_config__chat_model__provider: other
       A0_SET__model_config__chat_model__name: agent
       A0_SET__model_config__chat_model__api_base: http://host.docker.internal:8080/v1
-      A0_SET__model_config__chat_model__ctx_length: "4096"
+      A0_SET__model_config__chat_model__ctx_length: "${AGENT_CONTEXT_LENGTH:-8192}"
       A0_SET__model_config__utility_model__provider: other
       A0_SET__model_config__utility_model__name: agent
       A0_SET__model_config__utility_model__api_base: http://host.docker.internal:8080/v1
-      A0_SET__model_config__utility_model__ctx_length: "4096"
+      A0_SET__model_config__utility_model__ctx_length: "${AGENT_CONTEXT_LENGTH:-8192}"
       A0_SET__model_config__embedding_model__provider: huggingface
       A0_SET__model_config__embedding_model__name: sentence-transformers/all-MiniLM-L6-v2
       A0_SET__model_config__embedding_model__api_base: ""
@@ -33,6 +37,28 @@ services:
         import json
         import os
         from pathlib import Path
+
+        def seed_tree(source: Path, destination: Path) -> None:
+            """Install Local AI API quality seeds without overwriting user edits."""
+            if not source.exists():
+                return
+            for item in source.rglob("*"):
+                relative = item.relative_to(source)
+                target = destination / relative
+                if item.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                elif not target.exists():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(item.read_bytes())
+
+        seed_tree(Path("/opt/local-ai-api-quality/profiles"), Path("/a0/usr/agents"))
+        seed_tree(Path("/opt/local-ai-api-quality/projects"), Path("/a0/usr/projects"))
+        projects_root = Path("/a0/usr/projects")
+        for project in (projects_root.iterdir() if projects_root.exists() else ()):
+            if not project.is_dir():
+                continue
+            for meta_dir in ("instructions", "knowledge", "skills", "memory"):
+                (project / ".a0proj" / meta_dir).mkdir(parents=True, exist_ok=True)
 
         key = os.environ.get("API_KEY_OTHER", "").strip()
         if key:
@@ -66,14 +92,34 @@ services:
                 "provider": "other",
                 "name": "agent",
                 "api_base": "http://host.docker.internal:8080/v1",
-                "ctx_length": 4096,
+                "ctx_length": int(os.environ.get("AGENT_CONTEXT_LENGTH", "8192")),
                 "ctx_history": 0.7,
+                # Agent Zero parses every chat-model turn as a tool call.  Make
+                # Ollama constrain the response to that parser's required shape
+                # rather than relying on prompt wording alone.
+                "kwargs": {
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "agent_zero_tool_call",
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "tool_name": {"type": "string"},
+                                    "tool_args": {"type": "object"},
+                                },
+                                "required": ["tool_name", "tool_args"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                },
             },
             "utility_model": {
                 "provider": "other",
                 "name": "agent",
                 "api_base": "http://host.docker.internal:8080/v1",
-                "ctx_length": 4096,
+                "ctx_length": int(os.environ.get("AGENT_CONTEXT_LENGTH", "8192")),
                 "ctx_input": 0.7,
             },
             "embedding_model": {

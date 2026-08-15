@@ -18,7 +18,8 @@ x-gateway-environment: &gateway-environment
   AGENT_ZERO_ENABLED: "true"
   ENABLE_API_KEY_AUTH: ${ENABLE_API_KEY_AUTH:-false}
   API_KEY: ${API_KEY:-}
-  REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-600}
+  REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-0}
+  QUALITY_CONTEXT_TOKENS: ${QUALITY_CONTEXT_TOKENS:-8192}
   MAX_REQUEST_BODY_BYTES: ${MAX_REQUEST_BODY_BYTES:-10485760}
   REPO_OPS_AUTONOMY_ENABLED: ${REPO_OPS_AUTONOMY_ENABLED:-false}
   REPO_OPS_AUTONOMY_MAX_STORAGE_GIB: ${REPO_OPS_AUTONOMY_MAX_STORAGE_GIB:-20}
@@ -30,9 +31,15 @@ services:
     # Pin by manifest digest; change OLLAMA_IMAGE deliberately during upgrades.
     image: ${OLLAMA_IMAGE:-ollama/ollama@sha256:ec24bcaa2a810eb74171ce7c517813ef4821ed678988845e8d76cf62467036d4}
     restart: unless-stopped
+    # This quality-first deployment targets the installed NVIDIA GPU. The CPU
+    # override explicitly clears this reservation for low-compute installs.
+    gpus: all
     environment:
       OLLAMA_HOST: 127.0.0.1:11434
-      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-5m}
+      # Quality work is deliberately long-lived. Keep the active model hot and
+      # make the default 8k context available to Agent Zero and direct chat.
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-8192}
     volumes:
       - ollama-data:/root/.ollama
     ports:
@@ -55,7 +62,7 @@ services:
       - -c
       - |
         set -eu
-        models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b nomic-embed-text}"
+        models="${OLLAMA_MODELS:-qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b nomic-embed-text}"
         pulled=""
         for model in $$models; do
           case " $$pulled " in

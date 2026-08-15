@@ -106,6 +106,22 @@ def test_agent_zero_compose_builds_the_local_cockpit_overlay():
     assert "GATEWAY_STATUS_URL: http://host.docker.internal:8080/status.json" in compose
     assert "AGENT_ZERO_BASE_IMAGE" in compose
     assert "/opt/venv-a0/bin/python - <<'PY'" in compose
+    assert "A0_SET_agent_profile: agent0" in compose
+    assert '"agent_zero_tool_call"' in compose
+    compact_tools = (
+        REPO_ROOT / "agent_zero_overlay" / "profiles" / "local-14b" /
+        "prompts" / "agent.system.tools.md"
+    ).read_text(encoding="utf-8")
+    assert '"tool_args":{"text"' in compact_tools
+    assert "{{tools}}" not in compact_tools
+    assert (
+        REPO_ROOT / "agent_zero_overlay" / "profiles" / "local-14b" /
+        "plugins" / "bmad_method" / ".toggle-0"
+    ).is_file()
+    assert (
+        REPO_ROOT / "agent_zero_overlay" / "profiles" / "agent0" /
+        "prompts" / "agent.system.tools.md"
+    ).is_file()
 
 
 def test_agent_zero_overlay_installs_and_verifies_pyyaml():

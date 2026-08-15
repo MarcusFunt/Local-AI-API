@@ -20,7 +20,7 @@ ARG INSTALL_RAG=false
 ARG TORCH_CPU=false
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends build-essential ffmpeg git libsndfile1 && \
+    apt-get install -y --no-install-recommends build-essential ffmpeg git libsndfile1 ripgrep && \
     rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system app && \
@@ -50,6 +50,7 @@ RUN python -m pip install --upgrade pip && \
     rm -rf /var/lib/apt/lists/*
 
 COPY gateway ./gateway
+COPY agent_learning ./agent_learning
 COPY tests ./tests
 COPY scripts ./scripts
 COPY pytest.ini .

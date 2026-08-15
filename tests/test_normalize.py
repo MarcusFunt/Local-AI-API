@@ -38,6 +38,9 @@ class TestAliasMapping:
     def test_main_resolves_to_large_model(self):
         assert resolve_model("main", _settings()) == "qwen3.5:9b"
 
+    def test_quality_resolves_to_the_controlled_quality_candidate(self):
+        assert resolve_model("quality", _settings()) == "qwen3.5:9b"
+
     def test_small_resolves_to_small_model(self):
         assert resolve_model("small", _settings()) == "qwen3.5:4b"
 
@@ -48,7 +51,7 @@ class TestAliasMapping:
         assert resolve_model("agent", _settings()) == "qwen3:14b"
 
     def test_agent_utility_resolves_to_utility_model(self):
-        assert resolve_model("agent-utility", _settings()) == "qwen3:8b"
+        assert resolve_model("agent-utility", _settings()) == "qwen3:14b"
 
     def test_all_aliases_covered(self):
         """Every key in MODEL_MAP must resolve without error."""
@@ -57,7 +60,7 @@ class TestAliasMapping:
             assert resolve_model(alias, s) == expected
 
     def test_agent_zero_aliases_are_required(self):
-        assert required_model_aliases() == ("main", "small", "dev", "agent", "agent-utility")
+        assert required_model_aliases() == ("main", "quality", "small", "dev", "agent", "agent-utility")
 
 
 class TestDirectModelTags:
@@ -73,8 +76,9 @@ class TestDirectModelTags:
     def test_direct_agent_tag_accepted(self):
         assert resolve_model("qwen3:14b", _settings()) == "qwen3:14b"
 
-    def test_direct_agent_utility_tag_accepted(self):
-        assert resolve_model("qwen3:8b", _settings()) == "qwen3:8b"
+    def test_retired_weaker_utility_tag_is_rejected(self):
+        with pytest.raises(HTTPException):
+            resolve_model("qwen3:8b", _settings())
 
 
 class TestSafeProviderPrefixes:

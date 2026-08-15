@@ -1,0 +1,16 @@
+{
+  "title": "Personal Quality",
+  "description": "An isolated workspace for personal planning, writing, and durable preferences.",
+  "instructions": "Use this project only for personal work. Keep personal memory, notes, files, and preferences here; do not mix them into Research Quality or Code Quality. Ask before storing a new durable preference, and review or remove entries that are no longer true. State uncertainty for consequential advice.",
+  "include_agents_md": true,
+  "color": "#7c3aed",
+  "git_url": "",
+  "file_structure": {
+    "enabled": true,
+    "max_depth": 4,
+    "max_files": 20,
+    "max_folders": 20,
+    "max_lines": 200,
+    "gitignore": ""
+  }
+}

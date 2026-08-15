@@ -1,0 +1,3 @@
+title: Agent 0
+description: Compact, reliable Agent Zero profile for Qwen3 14B with an 8192-token context.
+context: Main local Agent Zero profile optimized for valid tool calls and evidence-rich answers on this machine.

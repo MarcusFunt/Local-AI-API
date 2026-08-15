@@ -1,0 +1,8 @@
+# Separate from the gateway runtime: installed only by Dockerfile.evals.
+absl-py==2.3.1
+docker==7.1.0
+immutabledict==4.2.1
+langdetect==1.0.9
+nltk==3.9.1
+evalplus @ git+https://github.com/evalplus/evalplus.git@26d6d00bb1fd0fa37f39c99d5290da67891d1c5e
+livebench @ git+https://github.com/LiveBench/LiveBench.git@79467bd36cee022826cebce12d79ef257c33b116

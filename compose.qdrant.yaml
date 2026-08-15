@@ -22,7 +22,10 @@ services:
     volumes:
       - qdrant-data:/qdrant/storage
     healthcheck:
-      test: ["CMD", "bash", "-c", "curl -sf http://127.0.0.1:6333/healthz || exit 1"]
+      # The pinned Qdrant image deliberately contains no curl or wget.  A
+      # Bash TCP connection is sufficient to prove that Qdrant has bound its
+      # local HTTP port before the gateway starts.
+      test: ["CMD", "bash", "-c", "</dev/tcp/127.0.0.1/6333"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -41,6 +44,11 @@ services:
       RAG_TOP_K: ${RAG_TOP_K:-4}
       RAG_CHUNK_SIZE: ${RAG_CHUNK_SIZE:-512}
       RAG_CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-64}
+      RAG_HYBRID_CANDIDATES: ${RAG_HYBRID_CANDIDATES:-16}
+      RAG_RERANK_CANDIDATES: ${RAG_RERANK_CANDIDATES:-12}
+      RAG_LEXICAL_SCAN_LIMIT: ${RAG_LEXICAL_SCAN_LIMIT:-5000}
+      RAG_RERANK_MODEL: ${RAG_RERANK_MODEL:-answerdotai/answerai-colbert-small-v1}
+      RAG_RERANK_CACHE_DIR: ${RAG_RERANK_CACHE_DIR:-/models/cache/fastembed}
     depends_on:
       qdrant:
         condition: service_healthy

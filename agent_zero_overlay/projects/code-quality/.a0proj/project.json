@@ -1,0 +1,16 @@
+{
+  "title": "Code Quality",
+  "description": "A bounded workspace for careful software engineering and review evidence.",
+  "instructions": "Use this project only for code and repository work. Preserve the repo-ops boundary: create isolated workspaces, verify with tests and review evidence, and do not merge, push, deploy, or alter production from an isolated workspace. Keep task-specific notes and memory here, and delete stale debugging hypotheses once disproven.",
+  "include_agents_md": true,
+  "color": "#059669",
+  "git_url": "",
+  "file_structure": {
+    "enabled": true,
+    "max_depth": 4,
+    "max_files": 20,
+    "max_folders": 20,
+    "max_lines": 200,
+    "gitignore": ""
+  }
+}

@@ -25,18 +25,45 @@ def _ollama_response(content: str, *, model: str) -> dict[str, object]:
 
 
 class TestAdvancedAgents:
+    async def test_agent_learning_telemetry_is_redacted(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from gateway.learning import record_agent_completion
+        from gateway.models import AgentCompletionMetadata, AgentCompletionResponse, ChatCompletionChoice, ChatCompletionUsage, ChatMessage
+
+        request = AgentCompletionRequest.model_validate({"mode": "graph", "messages": [{"role": "user", "content": "private prompt"}]})
+        response = AgentCompletionResponse(
+            id="agentcmpl-test",
+            created=1,
+            mode="graph",
+            model="qwen3.5:9b",
+            choices=[ChatCompletionChoice(index=0, message=ChatMessage(role="assistant", content="private answer"), finish_reason="stop")],
+            usage=ChatCompletionUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2),
+            metadata=AgentCompletionMetadata(steps_completed=1, elapsed_ms=1),
+        )
+
+        record_agent_completion(request, response, ["private stage"], ["stop"], str(tmp_path), "agent-policy-v1")
+
+        output = (tmp_path / "records.jsonl").read_text(encoding="utf-8")
+        assert "private prompt" not in output
+        assert "private answer" not in output
+        assert "private stage" not in output
+    async def test_final_answer_removes_ungrounded_citations(self) -> None:
+        from gateway.agent_orchestration import _clean_final_answer
+
+        assert _clean_final_answer("Claim [source-1] and [2].", set()) == "Claim and."
+        assert _clean_final_answer("Claim [a0b1] and code [index].", {"a0b1"}) == "Claim [a0b1] and code [index]."
+
     async def test_graph_runs_all_nodes_and_returns_only_final_answer(
         self,
         client: httpx.AsyncClient,
     ) -> None:
         captured: list[dict[str, object]] = []
-        responses = iter(["plan", "draft", "critique", "final answer"])
+        responses = iter(["plan", "draft", "critique", "verified ledger", "final answer"])
 
         async def capture(request: httpx.Request) -> httpx.Response:
             captured.append(json.loads(request.content))
             return httpx.Response(
                 200,
-                json=_ollama_response(next(responses), model="qwen3:14b"),
+                json=_ollama_response(next(responses), model="qwen3.5:9b"),
             )
 
         with respx.mock(base_url=OLLAMA_BASE) as mock:
@@ -54,22 +81,26 @@ class TestAdvancedAgents:
         assert body["object"] == "agent.completion"
         assert body["id"].startswith("agentcmpl-")
         assert body["mode"] == "graph"
-        assert body["model"] == "qwen3:14b"
+        assert body["model"] == "qwen3.5:9b"
         assert body["choices"][0]["message"]["content"] == "final answer"
-        assert body["metadata"] == {"steps_completed": 4, "elapsed_ms": body["metadata"]["elapsed_ms"]}
-        assert body["usage"] == {"prompt_tokens": 40, "completion_tokens": 12, "total_tokens": 52}
-        assert len(captured) == 4
-        assert [item["model"] for item in captured] == ["qwen3:14b"] * 4
+        assert body["metadata"] == {"steps_completed": 5, "elapsed_ms": body["metadata"]["elapsed_ms"]}
+        assert body["usage"] == {"prompt_tokens": 50, "completion_tokens": 15, "total_tokens": 65}
+        assert len(captured) == 5
+        assert [item["model"] for item in captured] == ["qwen3.5:9b"] * 5
         assert "planner" in captured[0]["messages"][0]["content"].lower()
         assert "Review work product" in captured[3]["messages"][-1]["content"]
-        assert [item["options"]["num_predict"] for item in captured] == [512, 512, 512, 1536]
+        assert "Accepted evidence ledger" in captured[4]["messages"][-1]["content"]
+        assert captured[4]["messages"][-1]["role"] == "user"
+        assert [item["think"] for item in captured] == [True, True, True, True, False]
+        assert [item["options"]["num_predict"] for item in captured] == [1000, 1000, 1000, 1000, 1600]
+        assert [item["options"]["num_ctx"] for item in captured] == [8192] * 5
 
-    async def test_expert_ensemble_uses_selected_experts_then_synthesizes(
+    async def test_expert_ensemble_uses_repeated_14b_experts_then_verifies_and_writes(
         self,
         client: httpx.AsyncClient,
     ) -> None:
         captured: list[dict[str, object]] = []
-        responses = iter(["first opinion", "second opinion", "synthesis"])
+        responses = iter(["first opinion", "second opinion", "verified ledger", "synthesis"])
 
         async def capture(request: httpx.Request) -> httpx.Response:
             payload = json.loads(request.content)
@@ -86,7 +117,7 @@ class TestAdvancedAgents:
                 json={
                     "mode": "mixture_of_experts",
                     "model": "agent",
-                    "expert_models": ["main", "small"],
+                    "expert_models": ["agent", "agent"],
                     "messages": [{"role": "user", "content": "Compare the options."}],
                 },
             )
@@ -94,18 +125,21 @@ class TestAdvancedAgents:
         assert response.status_code == 200
         body = response.json()
         assert body["choices"][0]["message"]["content"] == "synthesis"
-        assert body["metadata"]["steps_completed"] == 3
-        assert body["metadata"]["expert_models"] == ["qwen3.5:9b", "qwen3.5:4b"]
-        assert [item["model"] for item in captured] == ["qwen3.5:9b", "qwen3.5:4b", "qwen3:14b"]
+        assert body["metadata"]["steps_completed"] == 4
+        assert body["metadata"]["expert_models"] == ["qwen3:14b", "qwen3:14b"]
+        assert [item["model"] for item in captured] == ["qwen3:14b"] * 4
         assert "Specialist 1 work product" in captured[2]["messages"][-2]["content"]
-        assert [item["options"]["num_predict"] for item in captured] == [512, 512, 1536]
+        assert "Accepted evidence ledger" in captured[3]["messages"][-1]["content"]
+        assert [item["think"] for item in captured] == [True, True, True, False]
+        assert [item["options"]["num_predict"] for item in captured] == [1000, 1000, 1000, 1600]
+        assert [item["options"]["num_ctx"] for item in captured] == [8192] * 4
 
-    async def test_default_experts_use_the_14b_quality_model(
+    async def test_default_experts_mix_the_9b_candidate_with_14b_review(
         self,
         client: httpx.AsyncClient,
     ) -> None:
         captured: list[dict[str, object]] = []
-        responses = iter(["first", "second", "third", "synthesis"])
+        responses = iter(["first", "second", "third", "verified ledger", "synthesis"])
 
         async def capture(request: httpx.Request) -> httpx.Response:
             payload = json.loads(request.content)
@@ -126,15 +160,16 @@ class TestAdvancedAgents:
             )
 
         assert response.status_code == 200
-        assert response.json()["metadata"]["expert_models"] == ["qwen3:14b"] * 3
-        assert [item["model"] for item in captured] == ["qwen3:14b"] * 4
+        assert response.json()["metadata"]["expert_models"] == ["qwen3.5:9b", "qwen3.5:9b", "qwen3:14b"]
+        assert [item["model"] for item in captured] == ["qwen3.5:9b", "qwen3.5:9b", "qwen3:14b", "qwen3.5:9b", "qwen3.5:9b"]
+        assert [item["think"] for item in captured] == [True, True, True, True, False]
 
     async def test_graph_bounds_each_work_product_for_the_final_context(
         self,
         client: httpx.AsyncClient,
     ) -> None:
         captured: list[dict[str, object]] = []
-        responses = iter(["p" * 10_000, "d" * 10_000, "c" * 10_000, "final answer"])
+        responses = iter(["p" * 10_000, "d" * 10_000, "c" * 10_000, "v" * 10_000, "final answer"])
 
         async def capture(request: httpx.Request) -> httpx.Response:
             payload = json.loads(request.content)
@@ -155,16 +190,19 @@ class TestAdvancedAgents:
             )
 
         assert response.status_code == 200
-        final_work_products = [message["content"] for message in captured[3]["messages"][2:]]
-        assert len(final_work_products) == 3
-        assert all(len(content) <= 2_100 for content in final_work_products)
-        assert all(content.endswith("[Work product truncated]") for content in final_work_products)
+        verifier_work_products = [message["content"] for message in captured[3]["messages"][2:]]
+        assert len(verifier_work_products) == 3
+        assert all(len(content) <= 2_600 for content in verifier_work_products)
+        assert len(captured[4]["messages"]) == 3
+        assert "Accepted evidence ledger" in captured[4]["messages"][-1]["content"]
+        assert len(captured[4]["messages"][-1]["content"]) <= 2_600
+        assert all("[Work product truncated]" in content for content in verifier_work_products)
 
     async def test_final_answer_strips_qwen_reasoning_artifacts(
         self,
         client: httpx.AsyncClient,
     ) -> None:
-        responses = iter(["plan", "draft", "critique", "Final answer:\n</think>\n\n4"])
+        responses = iter(["plan", "draft", "critique", "verified", "Final answer:\n</think>\n\n4"])
 
         async def capture(request: httpx.Request) -> httpx.Response:
             return httpx.Response(
@@ -184,6 +222,94 @@ class TestAdvancedAgents:
 
         assert response.status_code == 200
         assert response.json()["choices"][0]["message"]["content"] == "4"
+
+    async def test_quality_agent_rejects_weaker_explicit_experts(self, client: httpx.AsyncClient) -> None:
+        response = await client.post(
+            "/v1/agent/completions",
+            json={
+                "mode": "mixture_of_experts",
+                "expert_models": ["main", "small"],
+                "messages": [{"role": "user", "content": "Hi"}],
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "quality_model_required"
+
+    async def test_quality_agent_retrieves_grounding_once_and_preserves_sources(
+        self,
+        client: httpx.AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gateway.rag import config as rag_config
+        from gateway.rag import store as rag_store
+
+        monkeypatch.setattr(rag_config, "RAG_ENABLED", True)
+        search = pytest.MonkeyPatch()
+        try:
+            async def fake_search(*args, **kwargs):
+                return [{
+                    "source_id": "point-1",
+                    "filename": "evidence.md",
+                    "document_id": "doc-1",
+                    "chunk_index": 2,
+                    "text": "The documented answer is four.",
+                }]
+
+            search.setattr(rag_store, "search", fake_search)
+            responses = iter(["plan", "draft", "critique", "verified", "[point-1] Four."])
+            captured: list[dict[str, object]] = []
+
+            async def capture(request: httpx.Request) -> httpx.Response:
+                payload = json.loads(request.content)
+                captured.append(payload)
+                return httpx.Response(200, json=_ollama_response(next(responses), model="qwen3:14b"))
+
+            with respx.mock(base_url=OLLAMA_BASE) as mock:
+                mock.post("/api/chat").mock(side_effect=capture)
+                response = await client.post(
+                    "/v1/agent/completions",
+                    json={
+                        "mode": "graph",
+                        "use_rag": True,
+                        "rag_document_id": "doc-1",
+                        "messages": [{"role": "user", "content": "What is the documented answer?"}],
+                    },
+                )
+        finally:
+            search.undo()
+
+        assert response.status_code == 200
+        assert all("[point-1] evidence.md" in item["messages"][1]["content"] for item in captured)
+        assert response.json()["metadata"]["grounding_sources"] == [{
+            "source_id": "point-1", "filename": "evidence.md", "document_id": "doc-1", "chunk_index": 2,
+        }]
+
+    async def test_quality_agent_rejects_source_context_that_cannot_fit(self, client: httpx.AsyncClient) -> None:
+        response = await client.post(
+            "/v1/agent/completions",
+            json={"mode": "graph", "messages": [{"role": "user", "content": "x" * 12001}]},
+        )
+
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "agent_context_too_large"
+
+    async def test_quality_agent_accepts_an_explicit_context_experiment(self, client: httpx.AsyncClient) -> None:
+        captured: list[dict[str, object]] = []
+
+        async def capture(request: httpx.Request) -> httpx.Response:
+            captured.append(json.loads(request.content))
+            return httpx.Response(200, json=_ollama_response("ledger", model="qwen3.5:9b"))
+
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(side_effect=capture)
+            response = await client.post(
+                "/v1/agent/completions",
+                json={"mode": "graph", "context_length": 12288, "messages": [{"role": "user", "content": "Compare contexts."}]},
+            )
+
+        assert response.status_code == 200
+        assert [item["options"]["num_ctx"] for item in captured] == [12288] * 5
 
     async def test_accepts_repeated_14b_experts_for_self_critique(self) -> None:
         request = AgentCompletionRequest.model_validate(

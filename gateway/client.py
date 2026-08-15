@@ -31,9 +31,14 @@ _client: httpx.AsyncClient | None = None
 
 def init(settings: Settings) -> None:
     global _client
+    timeout = (
+        httpx.Timeout(None)
+        if settings.request_timeout_seconds == 0
+        else httpx.Timeout(settings.request_timeout_seconds)
+    )
     _client = httpx.AsyncClient(
         base_url=settings.ollama_base_url,
-        timeout=httpx.Timeout(settings.request_timeout_seconds),
+        timeout=timeout,
     )
     logger.info("Ollama httpx client initialised (base_url=%s)", settings.ollama_base_url)
 
@@ -147,7 +152,10 @@ def _build_ollama_body(
         "model": resolved_model,
         "messages": _messages_for_ollama(request_dict["messages"]),
         "stream": stream,
-        "think": False,
+        # Thinking is deliberately private-by-default. The quality agent opts
+        # in only for internal planner/reviewer calls; public chat responses
+        # continue to use the clean non-thinking contract.
+        "think": bool(request_dict.get("think", False)),
     }
 
     tools = request_dict.get("tools")
@@ -170,6 +178,8 @@ def _build_ollama_body(
         options["stop"] = [stop] if isinstance(stop, str) else stop
     if request_dict.get("seed") is not None:
         options["seed"] = request_dict["seed"]
+    if request_dict.get("context_length") is not None:
+        options["num_ctx"] = request_dict["context_length"]
     if options:
         body["options"] = options
 

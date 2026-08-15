@@ -13,7 +13,7 @@ can call directly — no separate service needed.
 | `transcribe` | Transcribe base64-encoded WAV/MP3 audio to text using local Whisper. |
 | `speak` | Convert text to speech with local Chatterbox TTS. Returns base64-encoded WAV. |
 | `health_check` | Report the health of the gateway and Ollama backend. |
-| `search_documents` | Semantic search over indexed documents (requires `RAG_ENABLED=true`). |
+| `search_documents` | Hybrid semantic + keyword search over indexed documents (requires `RAG_ENABLED=true`). |
 
 ### Model aliases for `chat`
 
@@ -23,7 +23,7 @@ can call directly — no separate service needed.
 | `small` | 4B | Faster, lighter tasks |
 | `dev` | 0.8B | Ultra-fast, development/testing |
 | `agent` | 14B | Long-horizon reasoning |
-| `agent-utility` | 8B | Agent subtasks |
+| `agent-utility` | 14B | Compatibility alias; same quality model as `agent` |
 
 ## Enabling MCP in Docker
 

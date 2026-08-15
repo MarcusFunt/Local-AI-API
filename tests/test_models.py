@@ -20,5 +20,5 @@ async def test_list_models_returns_allowed_model_ids(client: httpx.AsyncClient):
     assert "agent" in ids
     assert "agent-utility" in ids
     assert "qwen3:14b" in ids
-    assert "qwen3:8b" in ids
+    assert "qwen3:8b" not in ids
     assert all(item["object"] == "model" for item in body["data"])

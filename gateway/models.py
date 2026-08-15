@@ -164,7 +164,9 @@ class AgentCompletionRequest(ChatCompletionRequest):
     """
 
     mode: Literal["graph", "mixture_of_experts"]
-    model: str = "agent"
+    # `quality` is the local 9B Qwen 3.5 reasoning/tool model. Keep the older
+    # 14B `agent` profile for Agent Zero and as an explicit comparison expert.
+    model: str = "quality"
     stream: Literal[False] = False
     max_tokens: int | None = Field(default=None, gt=0, le=4096)
     max_completion_tokens: int | None = Field(default=None, gt=0, le=4096)
@@ -175,7 +177,11 @@ class AgentCompletionRequest(ChatCompletionRequest):
     stream_options: None = None
     user: None = None
     n: None = None
-    use_rag: Literal[False] = False
+    # Advanced-agent RAG is retrieved once at the start of a run, then kept as
+    # immutable, source-labelled evidence across every deliberation stage.
+    use_rag: bool = False
+    rag_document_id: str | None = None
+    context_length: int | None = Field(default=None, ge=4096, le=32768)
     expert_models: list[str] = Field(default_factory=list, max_length=4)
 
     @field_validator("expert_models")
@@ -220,6 +226,7 @@ class AgentCompletionMetadata(BaseModel):
     steps_completed: int
     elapsed_ms: int
     expert_models: list[str] | None = None
+    grounding_sources: list[dict[str, str | int | None]] | None = None
 
 
 class AgentCompletionResponse(BaseModel):

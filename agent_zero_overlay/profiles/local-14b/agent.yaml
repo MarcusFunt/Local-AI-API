@@ -1,0 +1,3 @@
+title: Local 14B
+description: Compact, reliable Agent Zero profile for Qwen3 14B with an 8192-token context.
+context: Use for local Qwen3 14B chats, research, and code tasks that benefit from more evidence while preserving valid tool calls.

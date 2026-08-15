@@ -9,7 +9,7 @@ A private, lightweight OpenAI-compatible gateway for [Ollama](https://ollama.com
 - Accepts `POST /v1/chat/completions` requests in OpenAI format
 - Accepts `GET /v1/models` requests for the gateway allowlist
 - Normalises model aliases (`main` → `qwen3.5:9b`, `small` → `qwen3.5:4b`, `dev` → `qwen3.5:0.8b`)
-- Agent Zero aliases are `agent` (`qwen3:14b`) and `agent-utility` (`qwen3:8b`)
+- Agent Zero aliases `agent` and `agent-utility` both resolve to `qwen3:14b`
 - Proxies requests to Ollama running on `127.0.0.1:11434`
 - Translates Ollama's response format back to the OpenAI envelope
 - Supports both streaming (`stream: true`) and non-streaming responses
@@ -18,7 +18,7 @@ A private, lightweight OpenAI-compatible gateway for [Ollama](https://ollama.com
 - Accepts `POST /v1/audio/transcriptions` requests using local Whisper models
 - Accepts `POST /v1/audio/speech` requests using local Chatterbox TTS
 - Provides health endpoints at `GET /health`, `GET /health/ollama`, and `GET /health/qdrant`
-- Optionally indexes and semantically searches documents with Qdrant (RAG)
+- Optionally indexes documents with Qdrant and retrieves them with hybrid semantic + keyword search and a local reranker (RAG)
 - Optionally exposes the local AI and audio operations as MCP tools at `/mcp`
 - Runs Agent Zero as a separate Docker UI that uses this gateway as an
   OpenAI-compatible provider
@@ -52,29 +52,38 @@ the same Tailscale, optional bearer authentication, body-size limit, request
 timeout, and model allow-list as normal chat completions. It does not execute
 client-supplied tools or enable arbitrary model names.
 
-- `mode: "graph"` is a LangChain/LangGraph-style state machine: planner →
-  drafter → critic → finalizer. It uses the `agent` profile by default.
+- `mode: "graph"` is a state machine: planner → drafter → critic → verifier →
+  writer. It uses the `quality` (`qwen3.5:9b`) profile by default; `agent`
+  (`qwen3:14b`) remains available for comparison and Agent Zero.
 - `mode: "mixture_of_experts"` obtains independent specialist opinions, then
   lets the selected `model` synthesize a final answer. By default, it uses
-  three independent `agent` (`qwen3:14b`) passes with distinct roles and
-  temperatures. Supply two to four `expert_models` aliases to override that
-  ensemble; repeated `agent` aliases are supported for self-critique.
+  two independent `quality` (`qwen3.5:9b`) passes and one `agent`
+  (`qwen3:14b`) critic pass, each with distinct roles and temperatures. Supply
+  two to four approved `quality` or `agent` aliases to override that ensemble;
+  repeated aliases are supported for self-critique.
 
-The graph always makes four calls. The expert mode makes one call per
-specialist plus a final synthesis call; its specialists are intentionally
-sequential so the 14B quality model remains resident on the local GPU. Planner,
-draft, critic, and expert outputs are each capped at 512 tokens and retained as
-at most 2,000 characters. Final synthesis is capped at 1,536 tokens. These
-limits keep the complete deliberation inside the deployed 4,096-token Ollama
-context window. Intermediate drafts are not returned to the caller. The
-response reports aggregate token use and the number of completed stages in
-`metadata`.
+The graph always makes five calls. Planner, drafter, critic, verifier, and
+specialists use private reasoning; their hidden reasoning is discarded. Each produces a compact evidence ledger containing requirements,
+verified facts, assumptions, alternatives, risks, and a recommendation. The
+verifier passes only accepted findings to the non-thinking, user-facing writer.
+The default 8,192-token context carries substantially more evidence than the
+former 4k profile. Agent requests are still bounded so the prompt, grounding,
+evidence ledger, and final answer coexist without silent truncation.
+
+For document-grounded work, set `use_rag: true` (and optionally
+`rag_document_id`). The agent retrieves once, labels the resulting source IDs,
+and carries the same immutable evidence snapshot through every review stage.
+The final answer can cite those IDs, and `metadata.grounding_sources` exposes
+their document and chunk identities. Intermediate drafts and private reasoning
+are never returned. The response reports aggregate token use and completed
+stages in `metadata`.
 
 ```bash
 curl http://127.0.0.1:8080/v1/agent/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "mode": "graph",
+    "use_rag": true,
     "messages": [{"role": "user", "content": "Design a reliable backup plan."}]
   }'
 ```
@@ -175,7 +184,7 @@ The script:
 - binds the gateway to `0.0.0.0` only inside the private Docker network namespace so the host loopback publish works
 - auto-selects NVIDIA, AMD/ROCm, or CPU compose overrides
 - builds the gateway image and runs `python -m pytest tests -v` inside it before restarting the live gateway
-- pulls the space-separated `OLLAMA_MODELS` list from `.env`, defaulting to `qwen3.5:9b`, `qwen3.5:4b`, `qwen3.5:0.8b`, `qwen3:14b`, and `qwen3:8b`
+- pulls the space-separated `OLLAMA_MODELS` list from `.env`, defaulting to `qwen3.5:9b`, `qwen3.5:4b`, `qwen3.5:0.8b`, and `qwen3:14b`
 - installs Tailscale if needed, runs `tailscale up` interactively when unauthenticated, and configures Tailscale Serve for the gateway and Agent Zero
 - installs a systemd timer using the selected update schedule, defaulting to boot and daily using the same script
 
@@ -239,7 +248,7 @@ The Windows script:
 - binds the gateway to `0.0.0.0` only inside the private Docker network namespace so the host loopback publish works
 - auto-selects NVIDIA when Docker GPU access works, otherwise uses the CPU compose override
 - builds the gateway image and runs `python -m pytest tests -v` inside it before restarting the live gateway
-- pulls the space-separated `OLLAMA_MODELS` list from `.env`, defaulting to `qwen3.5:9b`, `qwen3.5:4b`, `qwen3.5:0.8b`, `qwen3:14b`, and `qwen3:8b`
+- pulls the space-separated `OLLAMA_MODELS` list from `.env`, defaulting to `qwen3.5:9b`, `qwen3.5:4b`, `qwen3.5:0.8b`, and `qwen3:14b`
 - configures `tailscale serve --bg http://127.0.0.1:8080` when Tailscale is installed and authenticated
 - starts Agent Zero on `127.0.0.1:50080`, using `agent` and `agent-utility` through this gateway
 - configures Agent Zero for Tailscale Serve on HTTPS port `8443`
@@ -280,15 +289,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-or-update.ps1
 ### Agent Zero on Windows
 
 Agent Zero starts alongside the gateway on Windows Docker Desktop. The installer
-adds `qwen3:14b` and `qwen3:8b` to `OLLAMA_MODELS`, starts Agent Zero on
+adds `qwen3:14b` to `OLLAMA_MODELS`, starts Agent Zero on
 `http://127.0.0.1:50080`, and configures Tailscale Serve for
 `https://<machine>.ts.net:8443/` when Tailscale is available.
 
 Agent Zero is configured to use this gateway's `/v1` OpenAI-compatible API with
 the `agent` (`qwen3:14b`) model for both chat and utility work. Both Agent Zero
-contexts are aligned to the deployed 4,096-token Ollama window. The
-`agent-utility` alias remains available for compatible external clients but is
-not selected by this quality-first profile. Do not use Agent Zero's public
+contexts are aligned to the deployed 8,192-token Ollama window. The
+`agent-utility` alias is retained for compatible external clients and resolves
+to the same 14B model, never to a weaker substep. Do not use Agent Zero's public
 Remote Link, Cloudflare Tunnel, Tailscale Funnel, or Microsoft Dev Tunnels in
 this project; keep access private through Tailscale Serve. When the gateway
 `API_KEY` is set, the Agent Zero Docker override writes it into Agent Zero's
@@ -301,6 +310,15 @@ Its managed memory configuration uses the local
 existing Agent Zero memory index without exposing Ollama. The gateway also
 offers the separately gated `embedding` alias (`nomic-embed-text`) at
 `POST /v1/embeddings` for OpenAI-compatible clients.
+
+The local overlay also seeds three non-destructive Agent Zero profiles and
+projects: **Research**, **Code**, and **Personal**. Their scoped instructions
+keep document evidence, repository operations, and personal memory separate.
+Seeds are copied only when the matching Agent Zero profile or project does not
+already exist, so later user edits are preserved. Select the corresponding
+profile/project in Agent Zero before starting work. Periodically review its
+project memory and remove stale or incorrect entries; memory is evidence, not
+an authority.
 
 ### Isolated repository MCP for Agent Zero
 
@@ -354,7 +372,7 @@ For a machine without a usable GPU (or when you just want a small footprint), en
 
 - **CPU only** — builds the gateway image with the CPU-only PyTorch wheel, which drops ~2.7 GB of unused CUDA libraries (the audio image goes from ~11.5 GB to ~4.8 GB).
 - **Smallest model only** — pulls just `qwen3.5:0.8b` (the `dev` profile) instead of the full set.
-- **Agent Zero off** — Agent Zero needs the large `qwen3:14b`/`qwen3:8b` models, so it is skipped in this mode.
+- **Agent Zero off** — Agent Zero needs the large `qwen3:14b` model, so it is skipped in this mode.
 
 Speech-to-text (Whisper) and text-to-speech (Chatterbox) still work; they just run on CPU.
 
@@ -608,9 +626,13 @@ client requested.
 
 ## Optional RAG document search
 
-RAG adds document ingestion and semantic search backed by Qdrant. It is off by
-default, and the document routes return HTTP 503 until it is enabled. The
-Docker setup requires the Qdrant Compose overlay and the RAG dependencies:
+RAG adds document ingestion and quality-first retrieval backed by Qdrant. It is
+off by default, and document routes return HTTP 503 until it is enabled. Search
+combines dense semantic candidates with a Unicode-aware keyword/BM25 pass,
+fuses them, then reranks the small candidate set locally with the multilingual
+ColBERT-style `answerdotai/answerai-colbert-small-v1` model. The first rerank
+downloads that model into the gateway cache. The Docker setup requires the
+Qdrant Compose overlay and the RAG dependencies:
 
 ```bash
 # Set RAG_ENABLED=true and INSTALL_RAG=true in .env first.
@@ -629,9 +651,27 @@ routes (unless API-key auth is disabled):
 | `DELETE /v1/documents/{document_id}` | Remove all chunks for one document. |
 | `POST /v1/search` | Search with JSON `{ "query": "...", "top_k": 4, "document_id": null }`. |
 
-Set `use_rag: true` in a chat-completions request to add retrieved context to
-that request. The conversation WebSocket has the same optional
-`session.start.use_rag` flag. When RAG is disabled, these flags are ignored.
+Set `use_rag: true` in a chat-completions or agent-completions request to add
+retrieved context to that request. The conversation WebSocket has the same
+optional `session.start.use_rag` flag. Agent mode retrieves once and preserves
+source IDs through planning, review, and final writing. When RAG is disabled,
+standard chat/conversation flags are ignored; the agent endpoint instead
+returns an explicit configuration error to avoid an ungrounded answer.
+
+Quality experiments are deliberately separate from production configuration.
+Use the ignored private case set and scripts documented in
+[`quality/README.md`](quality/README.md) to compare the 4k baseline with 8k,
+12k, or an optional `qwen3:30b` challenger. The evaluation gate promotes
+nothing automatically: retain a candidate only when it improves the private
+benchmark without a regression in factuality, instruction following, source
+support, completeness, or safety.
+
+For pinned public regressions, use the opt-in
+[`evals/README.md`](evals/README.md) Compose profile. It keeps IFEval,
+EvalPlus, and selected LiveBench dependencies out of the gateway image; scores
+normal chat and the five-stage agent separately; and executes generated code
+only in a network-disabled, disposable Docker child. Its daily scheduler is
+serial and never changes production configuration automatically.
 
 `/health/qdrant` is always available without API-key authentication, like the
 other health routes. For a direct, non-Docker run, export the RAG variables in
@@ -746,7 +786,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `AGENT_ZERO_TAILSCALE_HTTPS_PORT` | `8443` | Tailscale Serve HTTPS port for Agent Zero. |
 | `ENABLE_API_KEY_AUTH` | `false` | If `true`, requires a `Bearer` token on all non-health requests. |
 | `API_KEY` | *(empty)* | The required non-empty token when `ENABLE_API_KEY_AUTH=true`; also passed to Agent Zero as its `other` provider key. |
-| `REQUEST_TIMEOUT_SECONDS` | `600` | Max seconds to wait for Ollama. Large models can be slow on first load. |
+| `REQUEST_TIMEOUT_SECONDS` | `0` | Upstream read timeout in seconds. `0` waits indefinitely for continuous quality work. |
 | `MAX_REQUEST_BODY_BYTES` | `10485760` | Max allowed request body (10 MiB). |
 
 Docker-only variables used by `compose.yaml`:
@@ -756,8 +796,10 @@ Docker-only variables used by `compose.yaml`:
 | `OLLAMA_IMAGE` | pinned digest | Ollama image reference. Upgrade by changing the tested tag and digest together. |
 | `AUTOHEAL_IMAGE` | pinned digest | Autoheal image reference. |
 | `QDRANT_IMAGE` | pinned digest | Qdrant image reference used by the RAG overlay. |
-| `OLLAMA_KEEP_ALIVE` | `5m` | How long Ollama keeps models loaded after use. |
-| `OLLAMA_MODELS` | `qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b nomic-embed-text` | Space-separated model tags pulled by the Docker `model-init` service. |
+| `OLLAMA_KEEP_ALIVE` | `24h` | How long Ollama keeps models loaded after use. |
+| `OLLAMA_CONTEXT_LENGTH` | `8192` | Default Ollama context. Confirm models remain 100% GPU-resident before raising it. |
+| `QUALITY_CONTEXT_TOKENS` | `8192` | Context sent by the advanced quality-agent endpoint; requests may override it from 4k–32k. |
+| `OLLAMA_MODELS` | `qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b nomic-embed-text` | Space-separated model tags pulled by the Docker `model-init` service. |
 | `INSTALL_AUDIO` | `true` | Build the gateway image with Whisper and Chatterbox runtime dependencies. Set `false` for chat-only images. |
 | `INSTALL_RAG` | `false` | Build the gateway image with the RAG Python dependencies. Use `true` with `compose.qdrant.yaml`. |
 | `RAG_ENABLED` | `false` | Enable document routes and allow chat/conversation requests that opt into RAG. In Docker, use with `compose.qdrant.yaml`. |
@@ -766,6 +808,11 @@ Docker-only variables used by `compose.yaml`:
 | `RAG_EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model used for indexing and retrieval. |
 | `RAG_EMBED_DIM` | `768` | Embedding-vector dimension; it must match the configured embedding model. |
 | `RAG_TOP_K` | `4` | Default number of retrieved chunks. |
+| `RAG_HYBRID_CANDIDATES` | `16` | Dense and lexical candidates considered before reranking. |
+| `RAG_RERANK_CANDIDATES` | `12` | Fused candidates reranked locally by the ColBERT-style model. |
+| `RAG_LEXICAL_SCAN_LIMIT` | `5000` | Maximum chunks scanned for the local keyword/BM25 pass. |
+| `RAG_RERANK_MODEL` | `answerdotai/answerai-colbert-small-v1` | Local multilingual reranker model. |
+| `RAG_RERANK_CACHE_DIR` | `/models/cache/fastembed` | Persistent cache path for the reranker model. |
 | `RAG_CHUNK_SIZE` | `512` | Target document chunk size. |
 | `RAG_CHUNK_OVERLAP` | `64` | Overlap between consecutive document chunks. |
 | `AGENT_ZERO_BASE_IMAGE` | pinned digest | Agent Zero base image used for the local cockpit overlay and skill sandbox. |
@@ -781,15 +828,15 @@ The `dev` profile is intended for faster local development and uses [Qwen/Qwen3.
 | Client sends | Gateway forwards |
 |---|---|
 | `main` | `qwen3.5:9b` |
+| `quality` | `qwen3.5:9b` — quality-agent candidate |
 | `small` | `qwen3.5:4b` |
 | `dev` | `qwen3.5:0.8b` |
 | `agent` | `qwen3:14b` |
-| `agent-utility` | `qwen3:8b` |
+| `agent-utility` | `qwen3:14b` |
 | `qwen3.5:9b` | `qwen3.5:9b` |
 | `qwen3.5:4b` | `qwen3.5:4b` |
 | `qwen3.5:0.8b` | `qwen3.5:0.8b` |
 | `qwen3:14b` | `qwen3:14b` |
-| `qwen3:8b` | `qwen3:8b` |
 | `openai/<approved alias or tag>` | The same approved alias or tag (the `openai/` prefix is stripped) |
 | anything else | HTTP 422 (unless `ENABLE_ARBITRARY_MODELS=true`) |
 

@@ -1,0 +1,16 @@
+{
+  "title": "Research Quality",
+  "description": "A source-grounded workspace for research and document analysis.",
+  "instructions": "Use this project only for research and document work. Keep sources, notes, and durable findings here. Distinguish verified facts from inference, cite material claims, and maintain a short uncertainty section for difficult work. Review project memory before relying on it; remove stale entries rather than carrying them forward.",
+  "include_agents_md": true,
+  "color": "#2563eb",
+  "git_url": "",
+  "file_structure": {
+    "enabled": true,
+    "max_depth": 4,
+    "max_files": 20,
+    "max_folders": 20,
+    "max_lines": 200,
+    "gitignore": ""
+  }
+}

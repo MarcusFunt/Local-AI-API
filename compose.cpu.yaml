@@ -2,6 +2,7 @@ services:
   ollama:
     labels:
       local-ai-api.accelerator: cpu
+    gpus: !reset []
 
   # Low Compute Mode: build the gateway with CPU-only PyTorch (no CUDA libs).
   gateway:

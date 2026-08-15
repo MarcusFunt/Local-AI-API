@@ -4,6 +4,8 @@ ARG AGENT_ZERO_BASE_IMAGE=agent0ai/agent-zero@sha256:7f8bc5cc77c3ab9fb1216a51dc0
 FROM ${AGENT_ZERO_BASE_IMAGE}
 
 COPY agent_zero_overlay/plugins /a0/plugins
+COPY agent_zero_overlay/profiles /opt/local-ai-api-quality/profiles
+COPY agent_zero_overlay/projects /opt/local-ai-api-quality/projects
 
 # Agent Zero's local model configuration imports yaml during startup. Install
 # and verify the exact dependency in the same virtual environment that runs its
@@ -16,4 +18,6 @@ RUN /opt/venv-a0/bin/python -m pip install --no-cache-dir PyYAML==6.0.2 && \
 # before it can be tagged/recreated by the repository updater.
 RUN test -f /a0/plugins/local_ai_api_cockpit/plugin.yaml && \
     test -f /a0/plugins/local_ai_api_cockpit/api/status.py && \
-    test -f /a0/plugins/local_ai_api_cockpit/webui/cockpit.js
+    test -f /a0/plugins/local_ai_api_cockpit/webui/cockpit.js && \
+    test -f /opt/local-ai-api-quality/profiles/research-quality/agent.yaml && \
+    test -f /opt/local-ai-api-quality/projects/code-quality/.a0proj/project.json

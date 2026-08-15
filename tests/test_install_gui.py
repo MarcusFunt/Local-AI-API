@@ -52,7 +52,7 @@ def test_env_updates_keep_ollama_private_and_select_models(installer):
     assert updates["HOST"] == "127.0.0.1"
     assert updates["ENABLE_ARBITRARY_MODELS"] == "false"
     assert updates["AGENT_ZERO_ENABLED"] == "true"
-    assert updates["OLLAMA_MODELS"] == "qwen3.5:4b qwen3.5:0.8b qwen3:14b qwen3:8b"
+    assert updates["OLLAMA_MODELS"] == "qwen3.5:4b qwen3.5:0.8b qwen3:14b"
     assert updates["DEFAULT_WHISPER_MODEL"] == "none"
     assert updates["CHATTERBOX_MODEL"] == "chatterbox"
 
@@ -80,7 +80,7 @@ def test_env_updates_always_adds_agent_zero_required_models(installer):
     assert updates["AGENT_ZERO_ENABLED"] == "true"
     assert updates["AGENT_ZERO_PORT"] == "50080"
     assert updates["AGENT_ZERO_TAILSCALE_HTTPS_PORT"] == "8443"
-    assert updates["OLLAMA_MODELS"] == "qwen3.5:0.8b qwen3:14b qwen3:8b"
+    assert updates["OLLAMA_MODELS"] == "qwen3.5:0.8b qwen3:14b"
 
 
 def test_env_updates_can_enable_bounded_autonomous_workspaces(installer):

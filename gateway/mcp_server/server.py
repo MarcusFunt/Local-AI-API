@@ -59,7 +59,7 @@ def _client() -> httpx.AsyncClient:
 @mcp.tool()
 async def chat(
     message: Annotated[str, Field(description="The message to send to the language model.")],
-    model: Annotated[str, Field(description="Model alias: main (9B), small (4B), dev (0.8B), agent (14B), agent-utility (8B). Default: main.")] = "main",
+    model: Annotated[str, Field(description="Model alias: main (9B), small (4B), dev (0.8B), agent (14B), agent-utility (14B). Default: main.")] = "main",
     system: Annotated[str | None, Field(description="Optional system prompt.")] = None,
     temperature: Annotated[float, Field(description="Sampling temperature 0.0-1.0.", ge=0.0, le=1.0)] = 0.7,
     max_tokens: Annotated[int, Field(description="Maximum tokens to generate.", ge=1, le=8192)] = 1024,

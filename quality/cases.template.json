@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "coding-regression",
+      "kind": "coding",
+      "language": "en",
+      "prompt": "Review a proposed code change. Identify acceptance criteria, likely regressions, and the smallest verification plan. Do not invent test results.",
+      "criteria": ["correctness", "constraint adherence", "testability", "uncertainty"],
+      "checks": {"must_include": ["acceptance", "verification"], "must_not_include": ["I ran"], "max_characters": 5000}
+    },
+    {
+      "id": "research-synthesis",
+      "kind": "research",
+      "language": "en",
+      "prompt": "Compare two plausible approaches to a technical decision. State the evidence needed, trade-offs, and a recommendation with explicit uncertainty.",
+      "criteria": ["factual caution", "completeness", "reasoning", "actionability"],
+      "checks": {"must_include": ["recommend"], "max_characters": 5000}
+    },
+    {
+      "id": "document-grounding",
+      "kind": "document_qa",
+      "language": "en",
+      "prompt": "Using only the provided source material, answer the question and cite every material claim with its source label.",
+      "criteria": ["source support", "citation precision", "faithfulness", "completeness"],
+      "requires_rag": true,
+      "rag_document_id": "replace-with-an-indexed-private-fixture",
+      "reference_answer": "Replace with a concise answer derived from the fixed fixture.",
+      "checks": {"must_include": ["["], "max_characters": 5000}
+    },
+    {
+      "id": "tool-planning",
+      "kind": "tool_use",
+      "language": "en",
+      "prompt": "Plan a safe tool-assisted investigation. State which facts must be checked, the minimum tools needed, and what would make you stop and ask for approval.",
+      "criteria": ["tool choice", "safety", "completeness", "clarity"],
+      "checks": {"must_include": ["approval"], "max_characters": 5000}
+    },
+    {
+      "id": "voice-english",
+      "kind": "voice",
+      "language": "en",
+      "prompt": "In natural spoken English, explain why a careful answer can be better than a quick one. Keep it concise and avoid Markdown.",
+      "criteria": ["spoken clarity", "instruction adherence", "factual soundness", "conciseness"],
+      "checks": {"must_not_include": ["#"], "max_characters": 700}
+    },
+    {
+      "id": "voice-danish",
+      "kind": "voice",
+      "language": "da",
+      "prompt": "Forklar på naturligt dansk, hvorfor en omhyggelig gennemgang kan give et bedre svar end et hurtigt svar. Hold svaret kort og uden Markdown.",
+      "criteria": ["spoken clarity", "Danish fluency", "instruction adherence", "conciseness"],
+      "checks": {"must_not_include": ["#"], "max_characters": 700}
+    }
+  ]
+}

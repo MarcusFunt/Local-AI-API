@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "sources": {
+    "ifeval": {
+      "repository": "https://github.com/google-research/google-research.git",
+      "revision": "79586f209be93a072178188b6fbeeea4237854b9",
+      "sparse_path": "instruction_following_eval",
+      "license": "Apache-2.0"
+    },
+    "evalplus": {
+      "repository": "https://github.com/evalplus/evalplus.git",
+      "revision": "26d6d00bb1fd0fa37f39c99d5290da67891d1c5e",
+      "license": "MIT"
+    },
+    "livebench": {
+      "repository": "https://github.com/LiveBench/LiveBench.git",
+      "revision": "79467bd36cee022826cebce12d79ef257c33b116",
+      "release": "2024-11-25",
+      "license": "Apache-2.0"
+    },
+    "ragchecker": {
+      "repository": "https://github.com/amazon-science/RAGChecker.git",
+      "revision": "6091f08c00e676e87a970f2aeb4a23a484746348",
+      "license": "Apache-2.0",
+      "enabled": false
+    }
+  }
+}

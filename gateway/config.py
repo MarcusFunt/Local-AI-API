@@ -1,6 +1,6 @@
 from urllib.parse import urlparse
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,7 +13,13 @@ class Settings(BaseSettings):
     default_model_profile: str = "main"
     enable_api_key_auth: bool = False
     api_key: str = ""
-    request_timeout_seconds: int = 600
+    # Zero means no upstream read timeout. This is intentional for the
+    # always-on quality worker, whose long deliberation is more valuable than
+    # a request deadline. Connection failures still fail promptly.
+    request_timeout_seconds: int = Field(default=0, ge=0)
+    quality_context_tokens: int = Field(default=8192, ge=4096, le=32768)
+    agent_learning_dir: str = ""
+    agent_policy_version: str = "agent-policy-v1"
     max_request_body_bytes: int = 10_485_760
     enable_arbitrary_models: bool = False
     agent_zero_enabled: bool = True
@@ -60,6 +66,11 @@ class Settings(BaseSettings):
             raise ValueError(
                 "DEFAULT_MODEL_PROFILE must be a known alias or approved direct model tag."
             )
+
+        self.agent_learning_dir = self.agent_learning_dir.strip()
+        self.agent_policy_version = self.agent_policy_version.strip()
+        if not self.agent_policy_version:
+            raise ValueError("AGENT_POLICY_VERSION must not be empty.")
 
         self.default_whisper_model = self.default_whisper_model.strip()
         if self.default_whisper_model not in WHISPER_MODEL_MAP:

@@ -5,6 +5,7 @@ All Qdrant and Ollama calls are mocked — no live services required.
 from __future__ import annotations
 
 import io
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -97,6 +98,21 @@ class TestRagSettings:
         )
 
         assert settings.chunk_size > settings.chunk_overlap >= 0
+
+    def test_quality_retrieval_values_are_bounded_and_reranking_fits_candidates(self):
+        from gateway.rag.config import RagSettings
+
+        settings = RagSettings.from_environment(
+            {
+                "RAG_HYBRID_CANDIDATES": "4",
+                "RAG_RERANK_CANDIDATES": "999",
+                "RAG_LEXICAL_SCAN_LIMIT": "999999",
+            }
+        )
+
+        assert settings.hybrid_candidates == 4
+        assert settings.rerank_candidates == 4
+        assert settings.lexical_scan_limit == 100_000
 
 
 def test_search_request_caps_top_k():
@@ -380,3 +396,55 @@ class TestQdrantStore:
             assert result is False
         finally:
             store._client = original_client
+
+    async def test_bm25_supports_unicode_terms_and_returns_source_identity(self):
+        from gateway.rag.store import _bm25_candidates
+
+        matching = SimpleNamespace(
+            id="danish-point",
+            payload={"text": "En omhyggelig gennemgang giver bedre svar.", "filename": "da.md"},
+        )
+        other = SimpleNamespace(
+            id="other-point",
+            payload={"text": "A completely unrelated English passage.", "filename": "en.md"},
+        )
+
+        results = _bm25_candidates("omhyggelig gennemgang", [matching, other], limit=2)
+
+        assert [result["source_id"] for result in results] == ["danish-point"]
+        assert results[0]["filename"] == "da.md"
+
+    async def test_search_fuses_dense_and_lexical_then_reranks(self):
+        from gateway.rag import store
+
+        dense = SimpleNamespace(
+            id="dense-point",
+            score=0.91,
+            payload={"text": "Semantic match", "document_id": "doc", "filename": "dense.md", "chunk_index": 0},
+        )
+        lexical = SimpleNamespace(
+            id="lexical-point",
+            score=0.11,
+            payload={"text": "exact project protocol match", "document_id": "doc", "filename": "lexical.md", "chunk_index": 1},
+        )
+        mock_client = AsyncMock()
+        mock_client.search = AsyncMock(return_value=[dense])
+        mock_client.scroll = AsyncMock(return_value=([dense, lexical], None))
+        original_client = store._client
+        store._client = mock_client
+        try:
+            async def rerank(query, candidates):
+                assert query == "project protocol"
+                assert {candidate["source_id"] for candidate in candidates} == {"dense-point", "lexical-point"}
+                return list(reversed(candidates))
+
+            with patch.object(store, "ensure_collection", AsyncMock()), patch.object(
+                store, "embed_text", AsyncMock(return_value=[0.1, 0.2])
+            ), patch("gateway.rag.reranker.rerank", rerank):
+                results = await store.search("project protocol", top_k=2, document_id="doc")
+        finally:
+            store._client = original_client
+
+        assert [result["source_id"] for result in results] == ["lexical-point", "dense-point"]
+        assert mock_client.search.call_args.kwargs["limit"] >= 2
+        assert mock_client.scroll.call_args.kwargs["scroll_filter"] is not None

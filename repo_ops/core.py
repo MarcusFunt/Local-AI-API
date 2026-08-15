@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agent_learning import LearningRecordStore, build_learning_record, summarize_text
+
 from .autonomy import AutonomyPolicy, RUN_STATES, TERMINAL_STATES
 
 
@@ -55,6 +57,7 @@ class RepoOpsConfig:
     autonomy_max_storage_gib: int = 20
     autonomy_enabled: bool = False
     jobs_root: Path | None = None
+    learning_root: Path | None = None
 
     @classmethod
     def from_environment(cls) -> "RepoOpsConfig":
@@ -62,6 +65,7 @@ class RepoOpsConfig:
             source_root=Path(os.environ.get("REPO_OPS_SOURCE_ROOT", "/source")),
             workspaces_root=Path(os.environ.get("REPO_OPS_WORKSPACES_ROOT", "/workspaces")),
             jobs_root=Path(os.environ["REPO_OPS_JOBS_ROOT"]) if os.environ.get("REPO_OPS_JOBS_ROOT") else None,
+            learning_root=Path(os.environ["REPO_OPS_LEARNING_ROOT"]) if os.environ.get("REPO_OPS_LEARNING_ROOT") else None,
             gitnexus_repo=os.environ.get("REPO_OPS_GITNEXUS_REPO", "source"),
             archive_root=Path(os.environ["REPO_OPS_ARCHIVE_ROOT"]) if os.environ.get("REPO_OPS_ARCHIVE_ROOT") else None,
             lease_hours=int(os.environ.get("REPO_OPS_ACTIVE_LEASE_HOURS", "24")),
@@ -100,6 +104,10 @@ class RepoOpsManager:
     @property
     def _autonomy_root(self) -> Path:
         return self.config.workspaces_root / ".autonomy"
+
+    @property
+    def _learning_root(self) -> Path:
+        return self.config.learning_root or self._archive_root / "learning"
 
     @property
     def _jobs_root(self) -> Path:
@@ -552,8 +560,32 @@ class RepoOpsManager:
         entry = {"number": len(history) + 1, **fields}
         history.append(entry)
         log_path.write_text(json.dumps(history, indent=2) + "\n", encoding="utf-8")
+        self._record_learning_experiment(task_id, entry)
         self._touch_activity(task_id)
         return entry
+
+    def _record_learning_experiment(self, task_id: str, entry: dict[str, Any]) -> None:
+        """Mirror experiment outcomes into the shared redacted learning ledger."""
+        try:
+            lifecycle = self._load_lifecycle(task_id)
+            record = build_learning_record(
+                surface="repo_ops",
+                outcome="experiment_recorded",
+                policy_version="repo-ops-v1",
+                base_revision=str(lifecycle["base_revision"]),
+                metrics={"experiment_number": int(entry["number"]), "outcome": summarize_text(str(entry["outcome"]))["sha256"]},
+                trace={
+                    "task_id": task_id,
+                    "title": summarize_text(str(entry["title"])),
+                    "hypothesis": summarize_text(str(entry["hypothesis"])),
+                    "evidence": summarize_text(str(entry["evidence"])),
+                },
+            )
+            LearningRecordStore(self._learning_root).append(record)
+        except Exception:
+            # An experiment remains valid even if optional cross-loop telemetry
+            # cannot be written to the host-backed learning ledger.
+            return
 
     def experiment_history(self, task_id: str) -> list[dict[str, Any]]:
         """Return the task's persistent improvement ledger without exposing host files."""

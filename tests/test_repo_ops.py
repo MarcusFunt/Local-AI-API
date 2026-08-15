@@ -149,6 +149,9 @@ def test_improvement_inventory_and_experiment_ledger(manager: RepoOpsManager):
     assert inventory["test_candidates"] == ["gateway/sample.py"]
     assert manager.experiment_history("iterate-ui") == [entry]
     assert report["experiments"] == [entry]
+    learning_log = manager._learning_root / "records.jsonl"
+    assert learning_log.is_file()
+    assert "Found one explicit TODO" not in learning_log.read_text(encoding="utf-8")
 
 
 def test_capture_ui_queues_unnetworked_workspace_preview(manager: RepoOpsManager):

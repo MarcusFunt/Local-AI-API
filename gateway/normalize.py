@@ -4,17 +4,23 @@ from .config import Settings
 
 MODEL_MAP: dict[str, str] = {
     "main": "qwen3.5:9b",
+    # The quality profile is deliberately separate from `main`: callers can
+    # benchmark and promote quality-agent behavior without changing ordinary
+    # chat defaults.
+    "quality": "qwen3.5:9b",
     "small": "qwen3.5:4b",
     "dev": "qwen3.5:0.8b",
     "agent": "qwen3:14b",
-    "agent-utility": "qwen3:8b",
+    # Agent Zero's utility work is quality-critical memory consolidation, not
+    # a cheap background task. Keep it on the same 14B model as the agent.
+    "agent-utility": "qwen3:14b",
 }
 
 EMBEDDING_MODEL_MAP: dict[str, str] = {
     "embedding": "nomic-embed-text",
 }
 
-CORE_MODEL_ALIASES = ("main", "small", "dev")
+CORE_MODEL_ALIASES = ("main", "quality", "small", "dev")
 AGENT_ZERO_MODEL_ALIASES = ("agent", "agent-utility")
 REQUIRED_MODEL_ALIASES = CORE_MODEL_ALIASES + AGENT_ZERO_MODEL_ALIASES
 

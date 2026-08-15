@@ -71,7 +71,6 @@ class TestStatusJson:
                             _ollama_model("qwen3.5:4b"),
                             _ollama_model("qwen3.5:0.8b"),
                             _ollama_model("qwen3:14b"),
-                            _ollama_model("qwen3:8b"),
                         ]
                     },
                 )
@@ -84,6 +83,7 @@ class TestStatusJson:
         assert body["ollama"]["status"] == "ok"
         assert {model["alias"] for model in body["models"]} == {
             "main",
+            "quality",
             "small",
             "dev",
             "agent",
@@ -152,6 +152,7 @@ class TestStatusJson:
         assert body["gateway"]["agent_zero_enabled"] is True
         assert {model["alias"] for model in body["models"]} == {
             "main",
+            "quality",
             "small",
             "dev",
             "agent",
