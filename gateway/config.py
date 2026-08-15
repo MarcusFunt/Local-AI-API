@@ -21,14 +21,14 @@ class Settings(BaseSettings):
     agent_learning_dir: str = ""
     agent_policy_version: str = "agent-policy-v1"
     max_request_body_bytes: int = 10_485_760
-    enable_arbitrary_models: bool = False
+    enable_arbitrary_models: bool = True
     agent_zero_enabled: bool = True
     default_whisper_model: str = "none"
     whisper_device: str = "auto"
     whisper_cache_dir: str = ""
     chatterbox_model: str = "chatterbox"
     chatterbox_device: str = "auto"
-    warm_audio_on_start: bool = False
+    warm_audio_on_start: bool = True
 
     @field_validator("ollama_base_url")
     @classmethod

@@ -47,9 +47,9 @@ def test_auth_enabled_accepts_non_empty_api_key():
     assert settings.api_key == "test-secret"
 
 
-def test_invalid_default_model_profile_is_rejected_by_default():
+def test_invalid_default_model_profile_is_rejected_when_arbitrary_models_are_disabled():
     with pytest.raises(ValidationError):
-        Settings(default_model_profile="llama3:8b")
+        Settings(default_model_profile="llama3:8b", enable_arbitrary_models=False)
 
 
 def test_direct_default_model_tag_is_allowed():
@@ -60,6 +60,15 @@ def test_direct_default_model_tag_is_allowed():
 def test_arbitrary_default_model_profile_is_allowed_when_enabled():
     settings = Settings(default_model_profile="llama3:8b", enable_arbitrary_models=True)
     assert settings.default_model_profile == "llama3:8b"
+
+
+def test_optional_runtime_features_are_enabled_by_default(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("ENABLE_ARBITRARY_MODELS", raising=False)
+    monkeypatch.delenv("WARM_AUDIO_ON_START", raising=False)
+    settings = Settings(_env_file=None)
+
+    assert settings.enable_arbitrary_models is True
+    assert settings.warm_audio_on_start is True
 
 
 def test_agent_zero_enabled_is_forced_true():

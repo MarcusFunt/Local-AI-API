@@ -376,6 +376,9 @@ compose_files_for_accelerator() {
   if [[ "${AGENT_ZERO_ENABLED}" == "1" ]]; then
     printf '%s\n' -f "${root}/compose.agent-zero.yaml"
   fi
+  # The full local stack is opt-out: retrieval and isolated repo operations
+  # start unless an operator explicitly removes these overlays.
+  printf '%s\n' -f "${root}/compose.qdrant.yaml" -f "${root}/compose.repo-ops.yaml"
 }
 
 build_and_test_gateway_image() {
@@ -436,6 +439,11 @@ start_stack() {
     log "Starting Agent Zero."
     compose_cmd "${compose_args[@]}" up -d agent-zero
   fi
+
+  log "Starting optional retrieval and repository services."
+  compose_cmd "${compose_args[@]}" up -d qdrant repo-ops repo-ops-lifecycle repo-ops-preview
+  log "Starting the disposable sandbox Agent Zero stack."
+  docker_cmd compose -f compose.sandbox.yaml up -d sandbox-agent-zero sandbox-repo-ops
 }
 
 wait_for_url() {

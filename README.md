@@ -635,7 +635,7 @@ downloads that model into the gateway cache. The Docker setup requires the
 Qdrant Compose overlay and the RAG dependencies:
 
 ```bash
-# Set RAG_ENABLED=true and INSTALL_RAG=true in .env first.
+# RAG is enabled by default; set RAG_ENABLED=false or INSTALL_RAG=false to opt out.
 docker compose -f compose.yaml -f compose.qdrant.yaml up -d --build
 docker compose exec ollama ollama pull nomic-embed-text
 ```
@@ -801,8 +801,8 @@ Docker-only variables used by `compose.yaml`:
 | `QUALITY_CONTEXT_TOKENS` | `8192` | Context sent by the advanced quality-agent endpoint; requests may override it from 4k–32k. |
 | `OLLAMA_MODELS` | `qwen3.5:9b qwen3.5:4b qwen3.5:0.8b qwen3:14b nomic-embed-text` | Space-separated model tags pulled by the Docker `model-init` service. |
 | `INSTALL_AUDIO` | `true` | Build the gateway image with Whisper and Chatterbox runtime dependencies. Set `false` for chat-only images. |
-| `INSTALL_RAG` | `false` | Build the gateway image with the RAG Python dependencies. Use `true` with `compose.qdrant.yaml`. |
-| `RAG_ENABLED` | `false` | Enable document routes and allow chat/conversation requests that opt into RAG. In Docker, use with `compose.qdrant.yaml`. |
+| `INSTALL_RAG` | `true` | Build the gateway image with the RAG Python dependencies. Set `false` for a smaller non-RAG image. |
+| `RAG_ENABLED` | `true` | Enable document routes and allow chat/conversation requests that opt into RAG. Set `false` to disable retrieval. |
 | `QDRANT_URL` | `http://127.0.0.1:6333` | Private Qdrant address used by the RAG module. |
 | `QDRANT_COLLECTION` | `local-ai-api-docs` | Qdrant collection used for document chunks. |
 | `RAG_EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model used for indexing and retrieval. |

@@ -41,7 +41,7 @@ class RagSettings(BaseModel):
     lexical_scan_limit: int = Field(default=_DEFAULT_LEXICAL_SCAN_LIMIT, ge=1, le=100_000)
     rerank_model: str = _DEFAULT_RERANK_MODEL
     rerank_cache_dir: str = _DEFAULT_RERANK_CACHE_DIR
-    enabled: bool = False
+    enabled: bool = True
 
     @model_validator(mode="after")
     def validate_chunk_window(self) -> "RagSettings":

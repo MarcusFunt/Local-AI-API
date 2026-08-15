@@ -83,9 +83,9 @@ class InstallConfig:
     agent_zero_enabled: bool = True
     agent_zero_port: int = 50080
     agent_zero_tailscale_https_port: int = 8443
-    enable_autonomous_workspaces: bool = False
+    enable_autonomous_workspaces: bool = True
     autonomy_max_storage_gib: int = 20
-    agent_zero_cockpit_enabled: bool = False
+    agent_zero_cockpit_enabled: bool = True
     # Low Compute Mode: CPU-only, smallest model, no Agent Zero. Toggle off to
     # go back to GPU + the full model set.
     low_compute: bool = False

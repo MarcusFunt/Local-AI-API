@@ -463,6 +463,7 @@ function Get-ComposeArgumentsForAccelerator {
     if ($script:AgentZeroEnabled) {
         $arguments += @("-f", (Join-Path $Root "compose.agent-zero.yaml"))
     }
+    $arguments += @("-f", (Join-Path $Root "compose.qdrant.yaml"), "-f", (Join-Path $Root "compose.repo-ops.yaml"))
 
     return $arguments
 }
@@ -523,6 +524,11 @@ function Start-Stack {
         Write-Log "Starting Agent Zero."
         Invoke-DockerCompose -ComposeArguments $ComposeArguments -CommandArguments @("up", "-d", "agent-zero")
     }
+
+    Write-Log "Starting optional retrieval and repository services."
+    Invoke-DockerCompose -ComposeArguments $ComposeArguments -CommandArguments @("up", "-d", "qdrant", "repo-ops", "repo-ops-lifecycle", "repo-ops-preview")
+    Write-Log "Starting the disposable sandbox Agent Zero stack."
+    Invoke-Docker -Arguments @("compose", "-f", "compose.sandbox.yaml", "up", "-d", "sandbox-agent-zero", "sandbox-repo-ops")
 }
 
 function Wait-ForUrl {

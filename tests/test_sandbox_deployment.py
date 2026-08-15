@@ -18,6 +18,8 @@ def test_sandbox_is_loopback_only_and_keeps_the_auditor_internal() -> None:
     assert "target: /source" in compose
     assert "read_only: true" in compose
     assert "host.docker.internal:8080/v1" in compose
+    assert '"--max-pages", "25"' in compose
+    assert '"--max-depth", "3"' in compose
 
 
 def test_sandbox_release_helper_keeps_publish_outside_the_sandbox_stack() -> None:

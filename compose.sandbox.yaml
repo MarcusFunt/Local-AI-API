@@ -70,7 +70,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.repo-ops
-    command: ["python", "-m", "repo_ops.ui_audit", "--url", "http://sandbox-agent-zero"]
+    command:
+      ["python", "-m", "repo_ops.ui_audit", "--url", "http://sandbox-agent-zero", "--artifact-dir", "/archives/ui", "--max-pages", "25", "--max-depth", "3"]
     read_only: true
     tmpfs:
       - /tmp:rw,nosuid,nodev,noexec,size=1g
