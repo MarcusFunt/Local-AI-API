@@ -24,6 +24,48 @@ def _ollama_response(content: str, *, model: str) -> dict[str, object]:
     }
 
 
+async def test_agent_endpoint_records_redacted_stage_metadata(
+    client: httpx.AsyncClient,
+    default_settings,
+    tmp_path,
+) -> None:
+    default_settings.agent_learning_dir = str(tmp_path / "learning")
+    private_prompt = "customer deployment secret"
+    responses = iter([
+        "private plan",
+        "private draft",
+        "private critique",
+        "private evidence ledger",
+        "private final answer",
+    ])
+
+    async def capture(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ollama_response(next(responses), model="qwen3.5:9b"))
+
+    with respx.mock(base_url=OLLAMA_BASE) as mock:
+        mock.post("/api/chat").mock(side_effect=capture)
+        response = await client.post(
+            "/v1/agent/completions",
+            json={"mode": "graph", "messages": [{"role": "user", "content": private_prompt}]},
+        )
+
+    assert response.status_code == 200
+    record = json.loads((tmp_path / "learning" / "records.jsonl").read_text(encoding="utf-8"))
+    assert record["surface"] == "gateway_agent"
+    assert record["metrics"]["steps_completed"] == 5
+    assert [stage["finish_reason"] for stage in record["trace"]["stages"]] == ["stop"] * 5
+    assert [stage["output"]["characters"] for stage in record["trace"]["stages"]] == [
+        len("private plan"),
+        len("private draft"),
+        len("private critique"),
+        len("private evidence ledger"),
+        len("private final answer"),
+    ]
+    persisted = (tmp_path / "learning" / "records.jsonl").read_text(encoding="utf-8")
+    for private_text in (private_prompt, "private plan", "private final answer"):
+        assert private_text not in persisted
+
+
 class TestAdvancedAgents:
     async def test_agent_learning_telemetry_is_redacted(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
         from gateway.learning import record_agent_completion
