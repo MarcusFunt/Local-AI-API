@@ -1,0 +1,98 @@
+name: local-ai-api-sandbox
+
+# A user-visible, disposable Agent Zero instance. It uses the stable gateway
+# only for inference; its state, repo workspaces, and visual evidence are not
+# shared with the production Agent Zero instance.
+services:
+  sandbox-agent-zero:
+    image: local-ai-api-agent-zero-cockpit:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile.agent-zero-cockpit
+    restart: unless-stopped
+    environment:
+      API_KEY_OTHER: ${API_KEY:-unused}
+      A0_SET_agent_profile: agent0
+      A0_SET__model_config__chat_model__provider: other
+      A0_SET__model_config__chat_model__name: agent
+      A0_SET__model_config__chat_model__api_base: http://host.docker.internal:8080/v1
+      A0_SET__model_config__chat_model__ctx_length: "${AGENT_CONTEXT_LENGTH:-8192}"
+      A0_SET__model_config__utility_model__provider: other
+      A0_SET__model_config__utility_model__name: agent
+      A0_SET__model_config__utility_model__api_base: http://host.docker.internal:8080/v1
+      A0_SET__model_config__utility_model__ctx_length: "${AGENT_CONTEXT_LENGTH:-8192}"
+      AGENT_ZERO_COCKPIT_ENABLED: "true"
+      REPO_OPS_MCP_URL: http://sandbox-repo-ops:8090/mcp
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - sandbox-agent-zero-data:/a0/usr
+    ports:
+      - "127.0.0.1:${SANDBOX_AGENT_ZERO_PORT:-50082}:80"
+    networks:
+      - default
+      - sandbox-ui
+    labels:
+      local-ai-api.component: sandbox-agent-zero
+
+  sandbox-repo-ops:
+    build:
+      context: .
+      dockerfile: Dockerfile.repo-ops
+    environment:
+      REPO_OPS_SOURCE_ROOT: /source
+      REPO_OPS_WORKSPACES_ROOT: /workspaces
+      REPO_OPS_JOBS_ROOT: /jobs
+      REPO_OPS_ARCHIVE_ROOT: /archives
+      REPO_OPS_LEARNING_ROOT: /archives/learning
+      REPO_OPS_AUTONOMY_ENABLED: "true"
+    volumes:
+      - type: bind
+        source: ${SANDBOX_SOURCE_ROOT:-.}
+        target: /source
+        read_only: true
+      - sandbox-repo-ops-workspaces:/workspaces
+      - sandbox-repo-ops-jobs:/jobs
+      - type: bind
+        source: ${SANDBOX_ARTIFACT_ROOT:-./.local/sandbox}
+        target: /archives
+    expose:
+      - "8090"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      local-ai-api.component: sandbox-repo-ops
+
+  sandbox-ui-auditor:
+    profiles: ["audit"]
+    build:
+      context: .
+      dockerfile: Dockerfile.repo-ops
+    command: ["python", "-m", "repo_ops.ui_audit", "--url", "http://sandbox-agent-zero"]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=1g
+    volumes:
+      - type: bind
+        source: ${SANDBOX_ARTIFACT_ROOT:-./.local/sandbox}
+        target: /archives
+    networks:
+      - sandbox-ui
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 1g
+    cpus: 1.0
+
+volumes:
+  sandbox-agent-zero-data:
+  sandbox-repo-ops-workspaces:
+  sandbox-repo-ops-jobs:
+
+networks:
+  sandbox-ui:
+    internal: true

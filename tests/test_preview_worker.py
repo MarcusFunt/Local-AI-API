@@ -40,6 +40,7 @@ def test_preview_worker_runs_audit_with_isolated_runtime_paths(tmp_path, monkeyp
 
     assert result["status"] == "passed"
     assert result["screenshot"] == str(results / f"{task_id}.png")
+    assert result["visual_artifacts"] is None
 
 
 def test_verification_runs_only_from_a_temporary_workspace_copy(tmp_path, monkeypatch):

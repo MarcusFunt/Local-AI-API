@@ -168,6 +168,7 @@ def _run(task_id: str) -> dict[str, object]:
     try:
         time.sleep(1.5)
         screenshot = RESULTS / f"{task_id}.png"
+        artifact_dir = RESULTS / f"{task_id}-visual"
         result = subprocess.run(
             [
                 sys.executable,
@@ -177,6 +178,8 @@ def _run(task_id: str) -> dict[str, object]:
                 f"http://127.0.0.1:{port}/status",
                 "--screenshot",
                 str(screenshot),
+                "--artifact-dir",
+                str(artifact_dir),
             ],
             cwd=workspace,
             env=environment,
@@ -191,6 +194,7 @@ def _run(task_id: str) -> dict[str, object]:
                 "status": "passed" if result.returncode == 0 else "failed",
                 "finished_at": _now(),
                 "screenshot": str(screenshot) if screenshot.is_file() else None,
+                "visual_artifacts": str(artifact_dir) if artifact_dir.is_dir() else None,
             }
         )
         if result.returncode:

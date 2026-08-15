@@ -236,6 +236,19 @@ def _agent_zero_candidate_status() -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _sandbox_release_status() -> dict[str, Any] | None:
+    """Read bounded, host-written sandbox state without exposing artifacts."""
+    marker = Path(__file__).resolve().parents[2] / ".local" / "sandbox" / "release.json"
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    allowed = {"version", "revision", "checked_at", "checks", "status", "staging_url"}
+    return {key: value for key, value in data.items() if key in allowed}
+
+
 async def _build_status_payload() -> dict[str, Any]:
     ollama, ollama_models = await _fetch_ollama_tags()
     profiles = _profile_statuses(ollama_models)
@@ -257,6 +270,7 @@ async def _build_status_payload() -> dict[str, Any]:
         "autonomy": _autonomy_status(),
         "last_update_run": last_update_run,
         "agent_zero_candidate": _agent_zero_candidate_status(),
+        "sandbox_release": _sandbox_release_status(),
     }
 
 

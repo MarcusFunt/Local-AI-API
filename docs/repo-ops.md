@@ -49,8 +49,10 @@ gateway uses Ollama's separate network namespace and cannot reach it.
 2. Create a workspace with `create_workspace` and make only hash-checked
    `write_file` edits there.
 3. Run named checks: `unit`, `compile`, `compose_config`, `status_ui_tests`,
-   `repo_ops_tests`, and `dependency_health`. Use `capture_ui` for the
-   only UI audit: a workspace-only screenshot plus accessibility and timing evidence.
+   `repo_ops_tests`, and `dependency_health`. Use `capture_ui` for an offline
+   Playwright audit: masked screenshots, DOM structure, console/network
+   fingerprints, axe results, and visual-diff evidence. Raw prompts, page text,
+   request bodies, headers, and query strings are never retained.
 4. Record each hypothesis and outcome with `record_experiment`, so later task
    runs can read `experiment_history` instead of repeating failed ideas.
 5. Return `git_diff` and `task_report` for review. The worker has no commit,
@@ -119,3 +121,28 @@ python -m repo_ops.quarantine \
 
 Treat all sandbox output as untrusted. Promotion into the persistent Agent Zero
 instance always requires explicit human approval.
+
+## User-visible sandbox and visual evidence
+
+`compose.sandbox.yaml` starts a disposable Agent Zero UI on
+`127.0.0.1:50082`. It has its own Agent Zero and repo-ops volumes but uses the
+stable gateway only for model inference. Its `sandbox-ui-auditor` profile is
+connected only to the sandbox UI's internal network and crawls same-origin
+pages with strict page/depth limits. A screenshot/DOM/axe/console/network or
+visual-diff failure is a blocking evidence failure.
+
+The host-only staging helper never deploys or pushes:
+
+```bash
+python scripts/sandbox_release.py stage
+python scripts/sandbox_release.py status
+python scripts/sandbox_release.py approve --candidate /path/to/candidate.json
+```
+
+`approve` runs the existing independent promotion checks and is the only
+sandbox helper that can publish an approved result to `origin/main`; it must be
+run by the local operator and never from a container. Deployment remains under
+the existing host installer after publication. The helper writes a redacted
+status marker under `.local/sandbox/`, surfaced as
+`sandbox_release` in `/status.json`. Artifacts remain local and expire with the
+existing workspace archive lifecycle.
