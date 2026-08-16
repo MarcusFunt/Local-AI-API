@@ -67,6 +67,103 @@ async def test_agent_endpoint_records_redacted_stage_metadata(
 
 
 class TestAdvancedAgents:
+    async def test_adaptive_mode_is_default_and_returns_compact_verification_metadata(
+        self,
+        client: httpx.AsyncClient,
+    ) -> None:
+        captured: list[dict[str, object]] = []
+        responses = iter([
+            '{"task":"Review a code change","constraints":["do not invent tests"],"retrieval_queries":[]}',
+            "candidate one",
+            "candidate two",
+            "candidate three",
+            '{"accepted_evidence":"The change needs acceptance criteria and a verification plan.","verification":{"passed":true,"checks":["requirements_complete","verification_distinguished"]}}',
+            "Final answer",
+        ])
+
+        async def capture(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(request.content)
+            captured.append(payload)
+            return httpx.Response(200, json=_ollama_response(next(responses), model=payload["model"]))
+
+        with respx.mock(base_url=OLLAMA_BASE) as mock:
+            mock.post("/api/chat").mock(side_effect=capture)
+            response = await client.post(
+                "/v1/agent/completions",
+                json={"messages": [{"role": "user", "content": "Review this code change carefully."}]},
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["mode"] == "adaptive"
+        assert body["choices"][0]["message"]["content"] == "Final answer"
+        assert body["metadata"]["steps_completed"] == 6
+        assert body["metadata"]["quality_profile"] == "coding"
+        assert body["metadata"]["verification_passed"] is True
+        assert body["metadata"]["verification_checks"] == [
+            "requirements_complete", "verification_distinguished",
+        ]
+        assert len(captured) == 6
+        assert [item["think"] for item in captured] == [True, True, True, True, True, False]
+        assert "exactly one JSON object" in captured[0]["messages"][0]["content"]
+        assert "Accepted evidence ledger" in captured[-1]["messages"][-1]["content"]
+
+    async def test_adaptive_verifier_fails_closed_on_invalid_protocol(self) -> None:
+        from gateway.agent_orchestration import _GroundingEvidence, _verification_from_stage
+
+        result = _verification_from_stage("not json", _GroundingEvidence(prompt=None, sources=[]))
+
+        assert result.passed is False
+        assert result.checks == ["structured_verifier_output"]
+        assert "conservatively" in result.accepted_evidence
+
+    async def test_adaptive_verifier_rejects_unknown_grounding_citations(self) -> None:
+        from gateway.agent_orchestration import _GroundingEvidence, _verification_from_stage
+
+        result = _verification_from_stage(
+            '{"accepted_evidence":"Claim [unknown-source]","verification":{"passed":true,"checks":["citation_check"]}}',
+            _GroundingEvidence(prompt="source", sources=[{"source_id": "known-source"}]),
+        )
+
+        assert result.passed is False
+        assert "citation_labels_valid" in result.checks
+
+    async def test_adaptive_rag_reserves_evidence_for_query_facets(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gateway.agent_orchestration import _retrieve_grounding
+        from gateway.rag import config as rag_config
+        from gateway.rag import store as rag_store
+
+        monkeypatch.setattr(rag_config, "RAG_ENABLED", True)
+        calls: list[tuple[str, int]] = []
+
+        async def fake_search(query: str, *, top_k: int, document_id: str | None):
+            calls.append((query, top_k))
+            return [{
+                "source_id": query,
+                "filename": "evidence.md",
+                "document_id": document_id,
+                "chunk_index": 0,
+                "text": query,
+            }]
+
+        monkeypatch.setattr(rag_store, "search", fake_search)
+        request = AgentCompletionRequest.model_validate({
+            "mode": "adaptive",
+            "use_rag": True,
+            "rag_document_id": "doc-1",
+            "messages": [{"role": "user", "content": "primary question"}],
+        })
+
+        evidence = await _retrieve_grounding(request, ["facet one", "facet two"])
+
+        assert calls == [("primary question", 2), ("facet one", 1), ("facet two", 1)]
+        assert [source["source_id"] for source in evidence.sources] == [
+            "primary question", "facet one", "facet two",
+        ]
+
     async def test_agent_learning_telemetry_is_redacted(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
         from gateway.learning import record_agent_completion
         from gateway.models import AgentCompletionMetadata, AgentCompletionResponse, ChatCompletionChoice, ChatCompletionUsage, ChatMessage

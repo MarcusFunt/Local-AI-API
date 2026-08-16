@@ -5,9 +5,15 @@
 work, and include document IDs only when those documents are already indexed in
 the private Qdrant store. Never commit private prompts, answers, or reports.
 
+For promotion evidence, maintain at least 60 private cases divided evenly among
+research, document/RAG, coding, tool planning, personal assistance, and voice.
+Every material task family needs deterministic checks; RAG fixtures also need
+fixed document IDs and source-label checks.
+
 The production candidate is `quality` (Qwen 3.5 9B) at 8k context. Compare it
 with the retained `agent` (Qwen 3 14B) profile using the exact same cases,
-three deterministic seeds, context length, and judge. Each private RAG case
+five deterministic seeds, context length, and two local judge perspectives.
+Each private RAG case
 must pin `rag_document_id` to one already-indexed fixture and include
 checkable `checks` plus a short `reference_answer` for the judge.
 
@@ -16,7 +22,8 @@ Run the baseline:
 ```bash
 docker compose exec gateway python scripts/quality_benchmark.py \
   --cases quality/cases.private.json \
-  --transport gateway --model agent --mode graph --context-length 8192 --repeats 3 \
+  --transport gateway --model agent --mode adaptive --context-length 8192 --repeats 5 \
+  --judge-model agent --judge-model quality \
   --output quality/reports/14b-8k.json
 ```
 
@@ -27,7 +34,8 @@ only configurations that remain fully GPU-resident according to `ollama ps`.
 ```bash
 docker compose exec gateway python scripts/quality_benchmark.py \
   --cases quality/cases.private.json \
-  --transport gateway --model quality --mode graph --context-length 8192 --repeats 3 --timeout 0 \
+  --transport gateway --model quality --mode adaptive --context-length 8192 --repeats 5 --timeout 0 \
+  --judge-model agent --judge-model quality \
   --output quality/reports/quality-9b-8k.json
 ```
 
@@ -49,11 +57,14 @@ python scripts/quality_gate.py \
   --human-review quality/reports/human-review.json
 ```
 
-The gate rejects any deterministic-check failure, criterion-mean regression,
-paired score regression, incomplete human review, or a human preference for
-the baseline. It deliberately never modifies deployment configuration.
+The gate rejects any deterministic-check failure, criterion or task-family
+regression, paired score regression, a non-positive stratified 95% lower
+confidence bound, incomplete human review, or a human preference for the
+baseline. It deliberately never modifies deployment configuration.
 
 Public regression evidence is separate from this private blind-review flow.
 See [`../evals/README.md`](../evals/README.md) for pinned IFEval, EvalPlus, and
 LiveBench runs. A promotion must pass both the private gate above and
 `scripts/eval_public_gate.py`; `scripts/eval_promote.py` runs them in sequence.
+The repository research and adoption boundaries are documented in
+[`../docs/agent-quality-research.md`](../docs/agent-quality-research.md).

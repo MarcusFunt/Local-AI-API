@@ -30,7 +30,7 @@ def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
-def test_agent_proxy_adapts_graph_completion_to_openai_chat():
+def test_agent_proxy_adapts_adaptive_completion_to_openai_chat():
     calls: list[tuple[str, dict[str, Any]]] = []
 
     class Gateway(BaseHTTPRequestHandler):
@@ -55,7 +55,7 @@ def test_agent_proxy_adapts_graph_completion_to_openai_chat():
         with running_proxy(config) as base_url:
             response = _post(base_url + "/chat/completions", {"model": "quality", "messages": [{"role": "user", "content": "test"}], "max_tokens": 12})
         assert response["object"] == "chat.completion"
-        assert calls == [("/v1/agent/completions", {"model": "quality", "messages": [{"role": "user", "content": "test"}], "max_tokens": 12, "mode": "graph", "stream": False, "context_length": 12288})]
+        assert calls == [("/v1/agent/completions", {"model": "quality", "messages": [{"role": "user", "content": "test"}], "max_tokens": 12, "mode": "adaptive", "stream": False, "context_length": 12288})]
     finally:
         gateway.shutdown()
         gateway.server_close()
@@ -107,6 +107,27 @@ def test_public_gate_rejects_required_metric_regression(tmp_path: Path):
     verdict = gate.compare(baseline, candidate, 0.01)
     assert not verdict["passed"]
     assert any("ifeval/model/strict_accuracy" in failure for failure in verdict["failures"])
+
+
+def test_quality_gate_uses_a_positive_paired_lower_confidence_bound():
+    gate = _script_module("quality_gate_confidence_test", "quality_gate.py")
+    baseline = {
+        ("research-1", 0, 1): {"id": "research-1", "kind": "research", "scores": {
+            "factual_correctness": 2, "instruction_adherence": 2, "source_support": 2,
+            "completeness": 2, "safety": 2,
+        }},
+        ("coding-1", 0, 1): {"id": "coding-1", "kind": "coding", "scores": {
+            "factual_correctness": 2, "instruction_adherence": 2, "source_support": 2,
+            "completeness": 2, "safety": 2,
+        }},
+    }
+    candidate = {
+        key: {**record, "scores": {name: value + 1 for name, value in record["scores"].items()}}
+        for key, record in baseline.items()
+    }
+
+    assert gate._lower_confidence_bound(baseline, candidate, 100) == 1.0
+    assert gate._family_means(candidate) == {"research": 3.0, "coding": 3.0}
 
 
 def test_evalplus_sandbox_has_no_network_or_privileged_mount(monkeypatch, tmp_path: Path):

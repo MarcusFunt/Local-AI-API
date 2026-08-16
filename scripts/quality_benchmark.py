@@ -95,7 +95,13 @@ def _deterministic_checks(case: dict[str, Any], answer: str) -> dict[str, Any]:
     }
 
 
-def _judge(args: argparse.Namespace, case: dict[str, Any], answer: str, seed: int) -> dict[str, Any]:
+def _judge(
+    args: argparse.Namespace,
+    case: dict[str, Any],
+    answer: str,
+    seed: int,
+    judge_model: str,
+) -> dict[str, Any]:
     evaluation = {key: case.get(key) for key in ("id", "kind", "language", "criteria", "reference_answer", "checks")}
     prompt = "You are a strict answer-quality evaluator.\n" + _RUBRIC
     prompt += "\n\nCase metadata and checks:\n" + json.dumps(evaluation, ensure_ascii=False)
@@ -103,14 +109,14 @@ def _judge(args: argparse.Namespace, case: dict[str, Any], answer: str, seed: in
     if args.transport == "gateway":
         response = _post_json(
             args.base_url.rstrip("/") + "/v1/chat/completions",
-            {"model": args.judge_model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 400, "seed": seed},
+            {"model": judge_model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 400, "seed": seed},
             args.timeout,
         )
         content = _extract_content(response, "gateway")
     else:
         response = _post_json(
             args.base_url.rstrip("/") + "/api/chat",
-            {"model": args.judge_model, "stream": False, "think": True, "messages": [{"role": "user", "content": prompt}], "options": {"num_ctx": args.context_length, "num_predict": 400, "seed": seed}},
+            {"model": judge_model, "stream": False, "think": True, "messages": [{"role": "user", "content": prompt}], "options": {"num_ctx": args.context_length, "num_predict": 400, "seed": seed}},
             args.timeout,
         )
         content = _extract_content(response, "ollama")
@@ -140,6 +146,14 @@ def _load_cases(path: Path) -> list[dict[str, Any]]:
     return normalized
 
 
+def _mean_scores(scores: list[dict[str, int]]) -> dict[str, int]:
+    """Average multiple local judge perspectives without changing report consumers."""
+    return {
+        name: round(statistics.mean(score[name] for score in scores))
+        for name in _CRITERIA
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cases", type=Path, required=True)
@@ -147,21 +161,33 @@ def main() -> int:
     parser.add_argument("--transport", choices=("gateway", "ollama"), default="gateway")
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--model", default="quality")
-    parser.add_argument("--judge-model", default="agent")
-    parser.add_argument("--mode", choices=("graph", "mixture_of_experts"), default="graph")
+    parser.add_argument(
+        "--judge-model",
+        action="append",
+        dest="judge_models",
+        help="Local judge alias; specify twice for independent perspectives (defaults to agent and quality).",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("adaptive", "graph", "mixture_of_experts"),
+        default="adaptive",
+    )
     parser.add_argument("--context-length", type=int, default=8192)
     parser.add_argument("--max-tokens", type=int, default=1600)
-    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--seed", type=int, default=20260813)
     parser.add_argument("--timeout", type=int, default=0, help="Seconds per HTTP call; 0 waits indefinitely.")
     args = parser.parse_args()
     if not 4096 <= args.context_length <= 32768:
         parser.error("--context-length must be between 4096 and 32768")
-    if args.repeats < 3:
-        parser.error("--repeats must be at least 3 for promotion-quality evidence")
+    if args.repeats < 5:
+        parser.error("--repeats must be at least 5 for promotion-quality evidence")
     if args.timeout < 0:
         parser.error("--timeout cannot be negative")
     args.timeout = None if args.timeout == 0 else args.timeout
+    args.judge_models = args.judge_models or ["agent", "quality"]
+    if not 1 <= len(args.judge_models) <= 4:
+        parser.error("Specify between one and four --judge-model values.")
 
     records: list[dict[str, Any]] = []
     for repeat in range(args.repeats):
@@ -170,19 +196,23 @@ def main() -> int:
             started = time.monotonic()
             answer = _model_answer(args, case, seed)
             checks = _deterministic_checks(case, answer)
-            score = _judge(args, case, answer, seed)
+            judge_scores = [
+                {"model": judge_model, "scores": _judge(args, case, answer, seed, judge_model)}
+                for judge_model in args.judge_models
+            ]
+            score = _mean_scores([entry["scores"] for entry in judge_scores])
             records.append({
                 "id": case["id"], "repeat": repeat, "seed": seed,
                 "kind": case.get("kind", ""), "language": case.get("language", ""),
                 "elapsed_seconds": round(time.monotonic() - started, 3), "answer": answer,
-                "checks": checks, "scores": score,
+                "checks": checks, "scores": score, "judge_scores": judge_scores,
             })
             print(f"scored {case['id']} repeat={repeat + 1}/{args.repeats}", flush=True)
 
     means = {name: round(statistics.mean(record["scores"][name] for record in records), 3) for name in _CRITERIA}
     report = {
         "version": 2, "created_at_epoch": int(time.time()),
-        "configuration": {"transport": args.transport, "base_url": args.base_url, "model": args.model, "judge_model": args.judge_model, "mode": args.mode, "context_length": args.context_length, "repeats": args.repeats, "seed": args.seed},
+        "configuration": {"transport": args.transport, "base_url": args.base_url, "model": args.model, "judge_models": args.judge_models, "mode": args.mode, "context_length": args.context_length, "repeats": args.repeats, "seed": args.seed},
         "means": means, "overall_mean": round(statistics.mean(means.values()), 3), "records": records,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

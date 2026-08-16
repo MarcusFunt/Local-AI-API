@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import random
 import sys
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,43 @@ def _human_result(key_path: Path, review_path: Path, baseline: dict[str, Any], c
     return candidate_wins > baseline_wins, {"candidate_wins": candidate_wins, "baseline_wins": baseline_wins, "ties": len(expected) - candidate_wins - baseline_wins}
 
 
+def _record_mean(record: dict[str, Any]) -> float:
+    scores = record.get("scores", {})
+    if not isinstance(scores, dict):
+        raise ValueError("Benchmark record lacks scores.")
+    return sum(float(scores[name]) for name in _CRITERIA) / len(_CRITERIA)
+
+
+def _family_means(records: dict[tuple[str, int, int], dict[str, Any]]) -> dict[str, float]:
+    grouped: dict[str, list[float]] = {}
+    for record in records.values():
+        grouped.setdefault(str(record.get("kind") or "unspecified"), []).append(_record_mean(record))
+    return {kind: sum(values) / len(values) for kind, values in grouped.items()}
+
+
+def _lower_confidence_bound(
+    baseline: dict[tuple[str, int, int], dict[str, Any]],
+    candidate: dict[tuple[str, int, int], dict[str, Any]],
+    samples: int,
+) -> float:
+    """Paired, task-stratified bootstrap lower bound for quality improvement."""
+    groups: dict[str, list[tuple[float, float]]] = {}
+    for key, before in baseline.items():
+        groups.setdefault(str(before.get("id")), []).append((_record_mean(before), _record_mean(candidate[key])))
+    rng = random.Random(20260816)
+    deltas: list[float] = []
+    for _ in range(samples):
+        before_values: list[float] = []
+        after_values: list[float] = []
+        for pairs in groups.values():
+            for _ in pairs:
+                before, after = pairs[rng.randrange(len(pairs))]
+                before_values.append(before)
+                after_values.append(after)
+        deltas.append(sum(after_values) / len(after_values) - sum(before_values) / len(before_values))
+    return sorted(deltas)[max(0, int(samples * 0.025) - 1)]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, required=True)
@@ -66,19 +104,32 @@ def main() -> int:
     parser.add_argument("--human-review", type=Path, required=True)
     parser.add_argument("--minimum-overall-improvement", type=float, default=0.05)
     parser.add_argument("--allowed-per-criterion-regression", type=float, default=0.0)
+    parser.add_argument("--bootstrap-samples", type=int, default=1000)
+    parser.add_argument("--minimum-lower-confidence-bound", type=float, default=0.0)
     args = parser.parse_args()
 
     baseline, candidate = _report(args.baseline), _report(args.candidate)
+    if args.bootstrap_samples < 100:
+        parser.error("--bootstrap-samples must be at least 100.")
     baseline_records, candidate_records = _records_by_key(baseline), _records_by_key(candidate)
     if set(baseline_records) != set(candidate_records):
         raise ValueError("Baseline and candidate must cover identical case/repeat/seed records.")
     regressions = {name: round(float(candidate["means"][name]) - float(baseline["means"][name]), 3) for name in _CRITERIA if float(candidate["means"][name]) < float(baseline["means"][name]) - args.allowed_per_criterion_regression}
     failed_checks = [key for key, record in candidate_records.items() if not record.get("checks", {}).get("passed")]
     paired_regressions = [{"record": key, "criterion": name} for key in baseline_records for name in _CRITERIA if int(candidate_records[key]["scores"][name]) < int(baseline_records[key]["scores"][name]) - args.allowed_per_criterion_regression]
+    baseline_families, candidate_families = _family_means(baseline_records), _family_means(candidate_records)
+    family_regressions = {
+        family: round(candidate_families[family] - baseline_families[family], 3)
+        for family in baseline_families
+        if family in candidate_families and candidate_families[family] < baseline_families[family]
+    }
+    lower_confidence_bound = round(
+        _lower_confidence_bound(baseline_records, candidate_records, args.bootstrap_samples), 4
+    )
     human_passed, human_summary = _human_result(args.blind_key, args.human_review, baseline, candidate)
     overall_delta = round(float(candidate["overall_mean"]) - float(baseline["overall_mean"]), 3)
-    passed = overall_delta >= args.minimum_overall_improvement and not regressions and not failed_checks and not paired_regressions and human_passed
-    verdict = {"passed": passed, "overall_delta": overall_delta, "regressions": regressions, "failed_checks": failed_checks, "paired_regressions": paired_regressions, "human_review": human_summary}
+    passed = overall_delta >= args.minimum_overall_improvement and lower_confidence_bound > args.minimum_lower_confidence_bound and not regressions and not family_regressions and not failed_checks and not paired_regressions and human_passed
+    verdict = {"passed": passed, "overall_delta": overall_delta, "lower_95_confidence_bound": lower_confidence_bound, "regressions": regressions, "family_regressions": family_regressions, "failed_checks": failed_checks, "paired_regressions": paired_regressions, "human_review": human_summary}
     print(json.dumps(verdict, indent=2))
     if not passed:
         print("Candidate is not promotable; retain the current production quality configuration.", file=sys.stderr)

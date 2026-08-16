@@ -122,6 +122,12 @@ def test_agent_zero_compose_builds_the_local_cockpit_overlay():
         REPO_ROOT / "agent_zero_overlay" / "profiles" / "agent0" /
         "prompts" / "agent.system.tools.md"
     ).is_file()
+    quality_prompt = (
+        REPO_ROOT / "agent_zero_overlay" / "profiles" / "agent0" /
+        "prompts" / "agent.system.main.specifics.md"
+    ).read_text(encoding="utf-8")
+    assert "independent checks" in quality_prompt
+    assert "project-scoped" in quality_prompt
 
 
 def test_agent_zero_overlay_installs_and_verifies_pyyaml():

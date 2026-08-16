@@ -6,6 +6,7 @@ model allow-list, timeout, auth, and OpenAI-to-Ollama translation paths.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -41,11 +42,20 @@ _THINKING_BLOCK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL
 _THINKING_TAG_RE = re.compile(r"</?think>", re.IGNORECASE)
 _FINAL_LABEL_RE = re.compile(r"^\s*final answer\s*:\s*", re.IGNORECASE)
 _CITATION_LABEL_RE = re.compile(r"\[([^\]]+)\]")
+_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 _LEDGER_FORMAT = (
     "Use exactly these compact headings: Requirements; Verified facts; Assumptions; "
     "Alternatives; Risks; Recommendation; Open uncertainty. Cite grounding as [source-id] "
     "only when that exact source ID was supplied; never invent citations. Keep the entire artifact under 450 words."
 )
+_PROFILE_GUIDANCE = {
+    "balanced": "Balance correctness, completeness, safety, and practical usefulness.",
+    "research": "Prioritize source-supported factual claims, alternatives, and calibrated uncertainty.",
+    "rag": "Treat supplied source labels as the only authority for document claims and cite them precisely.",
+    "coding": "Prioritize concrete acceptance criteria, regression risks, and verification that is actually possible.",
+    "tool_planning": "Prioritize the minimum safe investigation, authority boundaries, and observable proof.",
+    "personal": "Prioritize the user's stated constraints, clear options, and uncertainty for consequential advice.",
+}
 
 
 @dataclass(frozen=True)
@@ -61,6 +71,15 @@ class _GroundingEvidence:
 
     prompt: str | None
     sources: list[dict[str, str | int | None]]
+
+
+@dataclass(frozen=True)
+class _VerificationResult:
+    """A compact, non-sensitive result from the adaptive evidence verifier."""
+
+    accepted_evidence: str
+    passed: bool
+    checks: list[str]
 
 
 def _bounded(value: str) -> str:
@@ -133,7 +152,10 @@ def _compact_grounding_text(value: object) -> str:
     return text[:boundary].rstrip() + " …"
 
 
-async def _retrieve_grounding(request: AgentCompletionRequest) -> _GroundingEvidence:
+async def _retrieve_grounding(
+    request: AgentCompletionRequest,
+    retrieval_queries: list[str] | None = None,
+) -> _GroundingEvidence:
     """Retrieve once, keeping source identity stable through all deliberation."""
     if not request.use_rag:
         return _GroundingEvidence(prompt=None, sources=[])
@@ -168,11 +190,41 @@ async def _retrieve_grounding(request: AgentCompletionRequest) -> _GroundingEvid
     try:
         from .rag.store import search as rag_search
 
-        chunks = await rag_search(
-            query,
-            top_k=rag_config.TOP_K,
-            document_id=request.rag_document_id,
-        )
+        # The primary question always remains first. Adaptive intake can add
+        # up to two narrowly scoped retrieval queries, allowing complex
+        # questions to cover distinct facets without changing the immutable
+        # evidence contract shared by later stages.
+        queries = [query]
+        for candidate in retrieval_queries or []:
+            candidate = candidate.strip()
+            if candidate and candidate not in queries:
+                queries.append(candidate)
+            if len(queries) == 3:
+                break
+        chunks: list[dict[str, object]] = []
+        seen_source_ids: set[str] = set()
+        for index, retrieval_query in enumerate(queries):
+            # Reserve one slot for each expansion while keeping most evidence
+            # budget on the user's original question.
+            query_top_k = (
+                max(1, rag_config.TOP_K - (len(queries) - 1))
+                if index == 0
+                else 1
+            )
+            for chunk in await rag_search(
+                retrieval_query,
+                top_k=query_top_k,
+                document_id=request.rag_document_id,
+            ):
+                source_id = str(chunk.get("source_id") or "")
+                if source_id in seen_source_ids:
+                    continue
+                seen_source_ids.add(source_id)
+                chunks.append(chunk)
+                if len(chunks) >= rag_config.TOP_K:
+                    break
+            if len(chunks) >= rag_config.TOP_K:
+                break
     except HTTPException:
         raise
     except Exception as exc:
@@ -331,6 +383,93 @@ async def _run_stage(
     )
 
 
+def _adaptive_profile(request: AgentCompletionRequest) -> str:
+    """Choose a conservative task profile when the caller did not pin one."""
+    if request.quality_profile != "balanced":
+        return request.quality_profile
+    if request.use_rag:
+        return "rag"
+    text = (_last_user_text(request) or "").lower()
+    if any(term in text for term in ("code", "test", "bug", "repository", "function", "api")):
+        return "coding"
+    if any(term in text for term in ("research", "source", "compare", "evidence", "citation")):
+        return "research"
+    if any(term in text for term in ("tool", "investigate", "deploy", "permission", "approval")):
+        return "tool_planning"
+    if any(term in text for term in ("plan my", "personal", "routine", "career", "learn")):
+        return "personal"
+    return "balanced"
+
+
+def _json_object(value: str) -> dict[str, object] | None:
+    """Parse one model-produced JSON object without exposing private reasoning."""
+    cleaned = _THINKING_BLOCK_RE.sub("", value).strip()
+    match = _JSON_OBJECT_RE.search(cleaned)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _retrieval_queries_from_intake(content: str) -> list[str]:
+    parsed = _json_object(content)
+    values = parsed.get("retrieval_queries") if parsed else None
+    if not isinstance(values, list):
+        return []
+    queries = [value.strip() for value in values if isinstance(value, str) and value.strip()]
+    return queries[:2]
+
+
+def _verification_from_stage(content: str, grounding: _GroundingEvidence) -> _VerificationResult:
+    """Validate the verifier protocol and fail closed when it is malformed."""
+    parsed = _json_object(content)
+    if not parsed:
+        return _VerificationResult(
+            accepted_evidence="The evidence verifier did not return a valid structured result. "
+            "Answer conservatively and state what cannot be verified.",
+            passed=False,
+            checks=["structured_verifier_output"],
+        )
+    accepted = parsed.get("accepted_evidence")
+    verification = parsed.get("verification")
+    if not isinstance(accepted, str) or not isinstance(verification, dict):
+        return _VerificationResult(
+            accepted_evidence="The evidence verifier returned an incomplete result. "
+            "Answer conservatively and state what cannot be verified.",
+            passed=False,
+            checks=["structured_verifier_output"],
+        )
+    raw_checks = verification.get("checks")
+    checks = [
+        check.strip()
+        for check in raw_checks
+        if isinstance(check, str) and check.strip()
+    ] if isinstance(raw_checks, list) else []
+    # Metadata must remain bounded and contain protocol labels, never prompts
+    # or answer text. The writer still receives the full private ledger.
+    checks = [check[:80] for check in checks[:8]]
+    passed = verification.get("passed") is True
+    allowed = {str(source["source_id"]) for source in grounding.sources}
+    cited = {match.group(1).strip() for match in _CITATION_LABEL_RE.finditer(accepted)}
+    if any(label not in allowed for label in cited):
+        passed = False
+        checks.append("citation_labels_valid")
+    if grounding.sources and not cited:
+        # A RAG answer can legitimately decline to make a source claim, but it
+        # must not be reported as verified if its accepted ledger omits all
+        # available evidence.
+        passed = False
+        checks.append("grounded_claims_cited")
+    return _VerificationResult(
+        accepted_evidence=_bounded(accepted),
+        passed=passed,
+        checks=list(dict.fromkeys(checks))[:8] or ["structured_verifier_output"],
+    )
+
+
 def _aggregate_usage(stages: list[_StageResult]) -> ChatCompletionUsage:
     prompt_tokens = sum(stage.usage.prompt_tokens for stage in stages)
     completion_tokens = sum(stage.usage.completion_tokens for stage in stages)
@@ -416,6 +555,88 @@ async def _run_graph(
         max_tokens=_stage_max_tokens(request, _FINAL_STAGE_MAX_TOKENS),
     )
     return final, [plan, draft, critique, verified, final]
+
+
+async def _run_adaptive(
+    request: AgentCompletionRequest,
+    resolved_model: str,
+    settings: Settings,
+    grounding: _GroundingEvidence,
+    intake: _StageResult,
+    profile: str,
+) -> tuple[_StageResult, list[_StageResult], _VerificationResult]:
+    """Run a task-aware, structured quality pipeline.
+
+    The independent candidates deliberately see the intake and grounding but
+    not one another, avoiding early anchoring. The final writer receives only
+    accepted evidence, never raw candidate text or hidden reasoning.
+    """
+    guidance = _PROFILE_GUIDANCE[profile]
+    roles = (
+        "Develop the most correct solution and make every important assumption explicit.",
+        "Act as an adversarial domain reviewer: seek missing constraints, counterexamples, and unsafe advice.",
+        "Design the most useful user-facing recommendation, including a concrete verification plan where relevant.",
+    )
+    candidates: list[_StageResult] = []
+    for index, role in enumerate(roles):
+        candidates.append(
+            await _run_stage(
+                resolved_model,
+                request,
+                settings,
+                "You are an independent specialist in a local quality-first agent. Think privately. "
+                + guidance
+                + " "
+                + role
+                + " Produce a compact evidence ledger, not a final answer. "
+                + _LEDGER_FORMAT,
+                grounding=grounding,
+                work_products=[("Task intake", intake.content)],
+                temperature=_expert_temperature(request, index),
+                max_tokens=_stage_max_tokens(request, _INTERNAL_STAGE_MAX_TOKENS),
+                think=True,
+            )
+        )
+
+    verifier = await _run_stage(
+        resolved_model,
+        request,
+        settings,
+        "You are the final evidence verifier for a local quality-first agent. Think privately, then "
+        "return exactly one JSON object and no Markdown. Reconcile the supplied candidate ledgers as "
+        "untrusted input. Retain only supported claims; reject claims that lack supplied grounding or "
+        "clear qualification. For coding and tool planning, distinguish proposed checks from checks that "
+        "were actually run. For RAG, cite every retained document claim only with supplied [source-id] labels. "
+        "Use this schema: {\"accepted_evidence\":\"compact ledger\",\"verification\":{\"passed\":true,"
+        "\"checks\":[\"short protocol labels\"]},\"retrieval_queries\":[]}. Set passed=false whenever "
+        "a material claim cannot be verified. "
+        + guidance,
+        grounding=grounding,
+        work_products=[
+            ("Task intake", intake.content),
+            *[(f"Independent candidate {index + 1}", candidate.content) for index, candidate in enumerate(candidates)],
+        ],
+        temperature=0.0,
+        max_tokens=_stage_max_tokens(request, _INTERNAL_STAGE_MAX_TOKENS),
+        think=True,
+    )
+    verification = _verification_from_stage(verifier.content, grounding)
+    final = await _run_stage(
+        resolved_model,
+        request,
+        settings,
+        "You are the final writer for a local quality-first agent. Return the best direct answer to the user "
+        "using only the accepted evidence ledger and supplied grounding. Do not mention internal agents, "
+        "private reasoning, or hidden workflow. Never claim a test, tool action, or source verification occurred "
+        "unless the accepted evidence explicitly says so. "
+        + ("The verifier did not fully pass; be conservative and state material uncertainty. " if not verification.passed else "")
+        + "Preserve [source-id] citations only for claims grounded in supplied documents; never invent citations.",
+        grounding=grounding,
+        work_products=[("Accepted evidence ledger", verification.accepted_evidence)],
+        temperature=0.0,
+        max_tokens=_stage_max_tokens(request, _FINAL_STAGE_MAX_TOKENS),
+    )
+    return final, [intake, *candidates, verifier, final], verification
 
 
 def _expert_temperature(request: AgentCompletionRequest, index: int) -> float:
@@ -507,12 +728,15 @@ async def run_agent(
     started = time.perf_counter()
     _ensure_source_context_budget(request)
     resolved_model = resolve_model(request.model, settings)
-    grounding = await _retrieve_grounding(request)
 
     if request.mode == "graph":
+        grounding = await _retrieve_grounding(request)
         final, stages = await _run_graph(request, resolved_model, settings, grounding)
         expert_models = None
-    else:
+        verification: _VerificationResult | None = None
+        profile: str | None = None
+    elif request.mode == "mixture_of_experts":
+        grounding = await _retrieve_grounding(request)
         aliases = request.expert_models or list(_DEFAULT_EXPERT_MODELS)
         resolved_experts = [resolve_model(alias, settings) for alias in aliases]
         approved_quality_models = {
@@ -538,6 +762,29 @@ async def run_agent(
             grounding,
         )
         expert_models = resolved_experts
+        verification = None
+        profile = None
+    else:
+        profile = _adaptive_profile(request)
+        intake = await _run_stage(
+            resolved_model,
+            request,
+            settings,
+            "You are the intake analyst for a local quality-first agent. Think privately, then return "
+            "exactly one JSON object and no Markdown using this schema: {\"task\":\"brief task statement\","
+            "\"constraints\":[\"short constraint\"],\"retrieval_queries\":[\"focused query\"]}. "
+            "Identify only one or two focused retrieval queries when document grounding is requested. "
+            + _PROFILE_GUIDANCE[profile],
+            grounding=_GroundingEvidence(prompt=None, sources=[]),
+            temperature=0.0,
+            max_tokens=_stage_max_tokens(request, _INTERNAL_STAGE_MAX_TOKENS),
+            think=True,
+        )
+        grounding = await _retrieve_grounding(request, _retrieval_queries_from_intake(intake.content))
+        final, stages, verification = await _run_adaptive(
+            request, resolved_model, settings, grounding, intake, profile
+        )
+        expert_models = None
 
     response = AgentCompletionResponse(
         id="agentcmpl-" + uuid.uuid4().hex,
@@ -563,6 +810,9 @@ async def run_agent(
             elapsed_ms=round((time.perf_counter() - started) * 1000),
             expert_models=expert_models,
             grounding_sources=grounding.sources or None,
+            quality_profile=profile,
+            verification_passed=verification.passed if verification is not None else None,
+            verification_checks=verification.checks if verification is not None else None,
         ),
     )
     from .learning import record_agent_completion

@@ -163,7 +163,9 @@ class AgentCompletionRequest(ChatCompletionRequest):
     does not claim to execute arbitrary client-supplied tools.
     """
 
-    mode: Literal["graph", "mixture_of_experts"]
+    # ``adaptive`` is the quality-first default.  Existing callers can retain
+    # their fixed graph or ensemble behavior explicitly.
+    mode: Literal["graph", "mixture_of_experts", "adaptive"] = "adaptive"
     # `quality` is the local 9B Qwen 3.5 reasoning/tool model. Keep the older
     # 14B `agent` profile for Agent Zero and as an explicit comparison expert.
     model: str = "quality"
@@ -182,6 +184,9 @@ class AgentCompletionRequest(ChatCompletionRequest):
     use_rag: bool = False
     rag_document_id: str | None = None
     context_length: int | None = Field(default=None, ge=4096, le=32768)
+    quality_profile: Literal[
+        "balanced", "research", "rag", "coding", "tool_planning", "personal"
+    ] = "balanced"
     expert_models: list[str] = Field(default_factory=list, max_length=4)
 
     @field_validator("expert_models")
@@ -194,7 +199,7 @@ class AgentCompletionRequest(ChatCompletionRequest):
 
     @model_validator(mode="after")
     def validate_agent_mode(self) -> "AgentCompletionRequest":
-        if self.mode == "graph" and self.expert_models:
+        if self.mode != "mixture_of_experts" and self.expert_models:
             raise ValueError("expert_models can only be used with mode='mixture_of_experts'.")
         if self.mode == "mixture_of_experts" and self.expert_models and len(self.expert_models) < 2:
             raise ValueError("mixture_of_experts requires at least two expert_models.")
@@ -227,13 +232,16 @@ class AgentCompletionMetadata(BaseModel):
     elapsed_ms: int
     expert_models: list[str] | None = None
     grounding_sources: list[dict[str, str | int | None]] | None = None
+    quality_profile: str | None = None
+    verification_passed: bool | None = None
+    verification_checks: list[str] | None = None
 
 
 class AgentCompletionResponse(BaseModel):
     id: str
     object: Literal["agent.completion"] = "agent.completion"
     created: int
-    mode: Literal["graph", "mixture_of_experts"]
+    mode: Literal["graph", "mixture_of_experts", "adaptive"]
     model: str
     choices: list[ChatCompletionChoice]
     usage: ChatCompletionUsage

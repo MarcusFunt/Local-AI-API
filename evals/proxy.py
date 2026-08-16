@@ -18,6 +18,7 @@ class ProxyConfig:
     surface: str
     context_length: int
     api_key: str = ""
+    agent_mode: str = "adaptive"
 
 
 def _post_json(url: str, payload: dict[str, Any], api_key: str) -> tuple[int, dict[str, Any]]:
@@ -39,13 +40,13 @@ def _post_json(url: str, payload: dict[str, Any], api_key: str) -> tuple[int, di
         return 502, {"error": {"message": f"Gateway unavailable: {exc}", "type": "upstream_error", "code": "gateway_unavailable"}}
 
 
-def _agent_payload(payload: dict[str, Any], context_length: int) -> dict[str, Any]:
+def _agent_payload(payload: dict[str, Any], context_length: int, mode: str) -> dict[str, Any]:
     allowed = {
         "model", "messages", "temperature", "top_p", "max_tokens", "max_completion_tokens",
         "stop", "seed", "use_rag", "rag_document_id",
     }
     agent_payload = {key: value for key, value in payload.items() if key in allowed}
-    agent_payload["mode"] = "graph"
+    agent_payload["mode"] = mode
     agent_payload["stream"] = False
     agent_payload["context_length"] = context_length
     return agent_payload
@@ -88,7 +89,7 @@ def _handler(config: ProxyConfig) -> type[BaseHTTPRequestHandler]:
             endpoint = "/v1/chat/completions"
             if config.surface == "agent":
                 endpoint = "/v1/agent/completions"
-                payload = _agent_payload(payload, config.context_length)
+                payload = _agent_payload(payload, config.context_length, config.agent_mode)
             status, response = _post_json(config.gateway_url.rstrip("/") + endpoint, payload, config.api_key)
             if config.surface == "agent" and status < 400 and response.get("object") == "agent.completion":
                 response["object"] = "chat.completion"

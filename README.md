@@ -52,7 +52,13 @@ the same Tailscale, optional bearer authentication, body-size limit, request
 timeout, and model allow-list as normal chat completions. It does not execute
 client-supplied tools or enable arbitrary model names.
 
-- `mode: "graph"` is a state machine: planner → drafter → critic → verifier →
+- `mode: "adaptive"` (the default) performs task intake, three independent
+  specialist passes, evidence verification, and final writing. It selects a
+  conservative quality profile from `balanced`, `research`, `rag`, `coding`,
+  `tool_planning`, or `personal`; callers may set `quality_profile` explicitly.
+  Its metadata reports only bounded verification labels and never intermediate
+  reasoning or ledgers.
+- `mode: "graph"` is a fixed state machine: planner → drafter → critic → verifier →
   writer. It uses the `quality` (`qwen3.5:9b`) profile by default; `agent`
   (`qwen3:14b`) remains available for comparison and Agent Zero.
 - `mode: "mixture_of_experts"` obtains independent specialist opinions, then
@@ -62,7 +68,7 @@ client-supplied tools or enable arbitrary model names.
   two to four approved `quality` or `agent` aliases to override that ensemble;
   repeated aliases are supported for self-critique.
 
-The graph always makes five calls. Planner, drafter, critic, verifier, and
+The adaptive path makes six calls; the fixed graph makes five. Planner, drafter, critic, verifier, and
 specialists use private reasoning; their hidden reasoning is discarded. Each produces a compact evidence ledger containing requirements,
 verified facts, assumptions, alternatives, risks, and a recommendation. The
 verifier passes only accepted findings to the non-thinking, user-facing writer.
@@ -82,7 +88,8 @@ stages in `metadata`.
 curl http://127.0.0.1:8080/v1/agent/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "mode": "graph",
+    "mode": "adaptive",
+    "quality_profile": "rag",
     "use_rag": true,
     "messages": [{"role": "user", "content": "Design a reliable backup plan."}]
   }'
