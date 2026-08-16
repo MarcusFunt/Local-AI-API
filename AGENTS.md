@@ -7,10 +7,23 @@ conventions when working in this repository.
 
 ## What this project is
 
-A private local HTTP gateway that sits between Tailscale Serve and Ollama. It
-exposes OpenAI-compatible chat and audio endpoints so coding agents on a
-Tailscale tailnet can call local models without exposing raw Ollama to the
-network.
+Local AI API is a private, local-first AI lab. The implemented runtime is a
+local HTTP gateway between Tailscale Serve and Ollama, with Agent Zero, optional
+RAG, audio, redacted learning records, and isolated repository-operation
+workers. It exposes OpenAI-compatible endpoints without exposing raw Ollama to
+the network.
+
+The product direction is an always-on local lab: Agent Zero remains the stable
+daily-use surface while separately scheduled experiments may improve bounded
+artifacts. Phases 1–2 of the durable controller are implemented in
+`lab_controller/`: it migrates a local SQLite database, persists strict
+`lab.job/v1` submissions, exposes status APIs, leases/fences worker attempts,
+and has one `repo-ops` workspace-preparation adapter. That adapter only creates
+a disposable code-patch workspace at a pinned revision. The rest of the
+controller is specified in [`docs/lab-controller-v0.1.md`](docs/lab-controller-v0.1.md).
+Do not describe the current service, scripts, or JSONL records as an evaluator,
+artifact registry, autonomous coding agent, or autonomous production deployment
+system.
 
 ---
 
@@ -27,8 +40,21 @@ network.
   forwarding.
 - API-key auth is optional and disabled by default. `ENABLE_API_KEY_AUTH=false`
   is the expected default.
-- Arbitrary model names are disabled by default. Keep
-  `ENABLE_ARBITRARY_MODELS=false` unless the user explicitly requests otherwise.
+- The intended secure policy is `ENABLE_ARBITRARY_MODELS=false`. Keep it false
+  unless the user explicitly requests otherwise. `.env.example` uses that value,
+  but the present raw settings/Compose fallbacks are `true`; always use an
+  explicit `.env` and do not claim model gating is secured by an omitted value.
+- Keep the stable runtime and the experimental lane separate. A worker may
+  create an artifact or isolated workspace; it must never modify the active
+  Agent Zero profile, gateway configuration, source checkout, deployment, or
+  model weights in place.
+- Self-improvement in v0.1 means bounded candidate changes to prompts, policies,
+  skills, routing, RAG configuration, or a reviewed code patch. It does not mean
+  autonomous base-model training, self-authorized release, push, merge, restart,
+  or deployment.
+- A candidate cannot certify itself. Promotion requires independent evaluation,
+  complete evidence, and an explicit local human approval; preserve rollback
+  information for every accepted release.
 
 ---
 
@@ -39,9 +65,12 @@ network.
 | `main` | `qwen3.5:9b` |
 | `small` | `qwen3.5:4b` |
 | `dev` | `qwen3.5:0.8b` |
+| `quality` | `qwen3.5:9b` |
+| `agent` | `qwen3:14b` |
+| `agent-utility` | `qwen3:14b` |
 
 Direct tags for those same models are accepted. Everything else is rejected with
-HTTP 422 unless `ENABLE_ARBITRARY_MODELS=true`.
+HTTP 422 when `ENABLE_ARBITRARY_MODELS=false` is explicitly configured.
 
 The mapping lives in `gateway/normalize.py`. If you add a model profile, update
 that mapping and add/adjust tests in `tests/test_normalize.py`.
@@ -100,6 +129,9 @@ first-load races.
 | Server | uvicorn |
 | Tests | pytest + pytest-asyncio + respx |
 | Audio | openai-whisper + chatterbox-tts |
+| RAG (optional overlay) | Qdrant + local hybrid retrieval/reranker |
+| Agent surface (optional overlay) | Agent Zero |
+| Isolated code work (optional overlay) | repo-ops MCP worker + unnetworked preview worker |
 
 ---
 
@@ -135,7 +167,15 @@ scripts/
   install_gui.py
   bootstrap-ubuntu26-ai-server.sh
 docs/
+  lab-controller-v0.1.md - v0.1 controller boundary and phase status
+  agent-learning.md    - implemented redacted evidence ledger and promotion tool
+  autonomous-workspaces.md - bounded current repo-ops workflow
   ubuntu26-server.md
+agent_learning/          - redacted learning-record and candidate helpers
+repo_ops/                - isolated workspaces, checks, lifecycle, and MCP tools
+agent_zero_overlay/      - Agent Zero cockpit/plugin integration
+lab_controller/          - local controller, job registry, and lease scheduler
+  repo_ops_worker.py     - token-authenticated phase-2 workspace adapter only
 ```
 
 Docker deployment files are part of the project: `Dockerfile`, `compose.yaml`,
@@ -201,7 +241,11 @@ docker compose config
 - Do not publish or document raw Ollama port `11434` for network access.
 - Do not add public internet exposure or router port-forwarding instructions.
 - Do not add a database, user accounts, another web UI, or new deployment stack
-  unless explicitly requested and the extra scope is understood.
+  unless explicitly requested and the extra scope is understood. The phase-2
+  controller SQLite database and optional isolated Compose overlay are explicitly
+  requested; keep them local-only, migration-led, and limited to job persistence,
+  leases, and workspace preparation until artifact, evaluator, retention,
+  recovery, and promotion work is separately implemented and tested.
 - Do not amend previous commits unless the user explicitly asks.
 
 ---

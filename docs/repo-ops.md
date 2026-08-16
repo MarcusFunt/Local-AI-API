@@ -4,6 +4,28 @@
 gateway's `/mcp` endpoint: the gateway continues to expose only local AI and
 audio tools, while `repo-ops` operates on an isolated repository clone.
 
+`repo-ops` is a current worker implementation, not the lab controller. The
+controller's phase-2 adapter can now lease exactly one narrow kind of repo-ops
+work: it creates a disposable `code_patch` workspace at a pinned revision, then
+reports that preparation step. It does not invoke this MCP server, edit files,
+run checks, create artifacts, or make a candidate. Its workspaces and JSON
+evidence will become controller artifacts in a later increment; see
+[Lab controller v0.1](lab-controller-v0.1.md).
+
+To run that separate, opt-in adapter, set a non-empty
+`CONTROLLER_WORKER_TOKEN` in `.env` and use:
+
+```bash
+docker compose -f compose.lab-controller.yaml up -d --build
+```
+
+The adapter has a read-only `/source` bind mount and a private internal network
+containing only `lab-controller`; it does not share the normal Compose network,
+Agent Zero, archive mount, Docker socket, or production credential. Its
+controller worker token is the one control-plane secret. The controller is
+published only at `127.0.0.1:8091`. This is a workspace-preparation bridge, not
+an autonomous repo-ops execution loop.
+
 ## Start the worker
 
 Start it alongside the normal Agent Zero deployment:

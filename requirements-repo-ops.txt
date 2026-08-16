@@ -2,3 +2,7 @@
 fastmcp>=2.0
 playwright>=1.49
 Pillow>=10.4
+# Direct dependencies for the constrained lab-controller repo-ops adapter.
+pydantic==2.9.2
+pydantic-settings==2.6.1
+httpx==0.27.2

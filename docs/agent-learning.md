@@ -1,5 +1,13 @@
 # Agent learning and promotion
 
+This is the **implemented evidence and manual-promotion layer**, not the
+controller's source of truth. `records.jsonl` is append-only evidence; it is not
+the scheduler, worker lease store, or status API. The SQLite-backed controller
+now persists validated jobs and events, tracks one repo-ops worker lease type,
+and prepares empty disposable workspaces. Artifact import, evaluation, and
+promotion remain later work specified in
+[Lab controller v0.1](lab-controller-v0.1.md).
+
 The gateway agent and the isolated repository worker write a shared
 append-only `records.jsonl` format. A record contains an identifier, policy
 version, outcome, scalar metrics, Git base revision when applicable, and hashes

@@ -1,0 +1,91 @@
+name: local-ai-api
+
+# Optional phase-2 lab controller. It is deliberately separate from the normal
+# installer. The worker can reach only this controller over an internal network;
+# it gets a read-only source checkout and a disposable workspace volume.
+services:
+  lab-controller:
+    build:
+      context: .
+      dockerfile: Dockerfile.lab-controller
+    restart: unless-stopped
+    command: ["uvicorn", "lab_controller.main:app", "--host", "0.0.0.0", "--port", "8091"]
+    environment:
+      CONTROLLER_DATABASE_PATH: /controller-state/controller.sqlite3
+      CONTROLLER_LEASE_SECONDS: ${CONTROLLER_LEASE_SECONDS:-60}
+      CONTROLLER_SCHEDULER_INTERVAL_SECONDS: ${CONTROLLER_SCHEDULER_INTERVAL_SECONDS:-5}
+      CONTROLLER_WORKER_TOKEN: ${CONTROLLER_WORKER_TOKEN:?Set CONTROLLER_WORKER_TOKEN in .env before starting the lab controller.}
+    ports:
+      - "127.0.0.1:${CONTROLLER_PORT:-8091}:8091"
+    volumes:
+      - type: volume
+        source: lab-controller-state
+        target: /controller-state
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - lab-controller
+    labels:
+      local-ai-api.component: lab-controller
+
+  repo-ops-lab-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.repo-ops
+    restart: unless-stopped
+    command: ["python", "-m", "lab_controller.repo_ops_worker"]
+    environment:
+      CONTROLLER_WORKER_TOKEN: ${CONTROLLER_WORKER_TOKEN:?Set CONTROLLER_WORKER_TOKEN in .env before starting the lab controller.}
+      REPO_OPS_CONTROLLER_BASE_URL: http://lab-controller:8091
+      REPO_OPS_CONTROLLER_WORKER_ID: ${REPO_OPS_CONTROLLER_WORKER_ID:-repo-ops-workspace-adapter}
+      REPO_OPS_CONTROLLER_IMAGE_DIGEST: ${REPO_OPS_CONTROLLER_IMAGE_DIGEST:-local-dev-unpinned}
+      REPO_OPS_CONTROLLER_POLL_SECONDS: ${REPO_OPS_CONTROLLER_POLL_SECONDS:-5}
+      REPO_OPS_CONTROLLER_HEARTBEAT_SECONDS: ${REPO_OPS_CONTROLLER_HEARTBEAT_SECONDS:-10}
+      REPO_OPS_SOURCE_ROOT: /source
+      REPO_OPS_WORKSPACES_ROOT: /workspaces
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - type: bind
+        source: .
+        target: /source
+        read_only: true
+      - type: volume
+        source: repo-ops-workspaces
+        target: /workspaces
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=1g
+      - /run:rw,nosuid,nodev,noexec,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 2g
+    cpus: 1.0
+    depends_on:
+      lab-controller:
+        condition: service_healthy
+    networks:
+      - lab-controller
+    labels:
+      local-ai-api.component: repo-ops-lab-worker
+
+volumes:
+  lab-controller-state:
+  repo-ops-workspaces:
+
+networks:
+  lab-controller:
+    internal: true
