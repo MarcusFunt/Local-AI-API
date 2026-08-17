@@ -1,10 +1,41 @@
-# Local AI API Gateway
+# Local AI API — a local AI lab
 
-A private, lightweight OpenAI-compatible gateway for [Ollama](https://ollama.com), designed to be exposed privately over [Tailscale Serve](https://tailscale.com/kb/1242/tailscale-serve). Coding agents on your Tailscale tailnet can use the standard OpenAI chat-completions API against your local models — without Ollama ever touching the network.
+Local AI API is a private, local-first AI lab. Its current runtime is an
+[Ollama](https://ollama.com) gateway plus [Agent Zero](https://github.com/frdel/agent-zero),
+retrieval, and isolated repository-operation workers. It is designed to be
+reached privately through [Tailscale Serve](https://tailscale.com/kb/1242/tailscale-serve),
+without exposing raw Ollama to the network.
+
+The product goal is twofold: keep a dependable Agent Zero workspace available
+for normal work, while running bounded local experiments that can improve
+prompts, policies, skills, routing, retrieval configuration, or code candidates
+over time. An experiment never edits the active runtime in place. It must create
+an isolated candidate, produce reproducible evaluation evidence, and receive an
+explicit local promotion decision.
+
+The concrete controller design for that next layer is in
+[Lab controller v0.1](docs/lab-controller-v0.1.md). Phases 1–2 now provide a
+loopback-only SQLite control plane with validated jobs, status APIs, durable
+leases/heartbeats, and one isolated repo-ops workspace-preparation adapter.
+Evaluation, artifacts, releases, and promotion remain deliberately
+unimplemented.
+
+## Deployment modes
+
+| Mode | What it starts | Intended use |
+|---|---|---|
+| `compose.yaml` with an accelerator overlay | Ollama, model initialization, and the OpenAI-compatible gateway | Small, core local runtime |
+| `scripts/setup-docker.sh` / `.ps1` | Core runtime plus Agent Zero | Standard interactive local setup |
+| `scripts/install-or-update.sh` / `.ps1` | Managed full stack: Agent Zero (unless opted out), Qdrant/RAG, repo-ops, lifecycle/preview workers, and a separate sandbox Agent Zero instance | Private lab host and scheduled maintenance |
+| `uvicorn lab_controller.main:app --host 127.0.0.1 --port 8091` | Controller API: migrations, job registry, status APIs, lease reaper, and token-disabled worker endpoints | Local controller development; it is not part of the installer |
+| `compose.lab-controller.yaml` | Optional controller plus one internal-network repo-ops workspace adapter | Explicit local lab setup; it does not run models, edit code, evaluate, or promote |
+
+MCP support remains opt-in at image-build time. The repo-ops worker is an
+internal Agent Zero MCP service, not a public gateway endpoint.
 
 ---
 
-## What this gateway does
+## Current runtime capabilities
 
 - Accepts `POST /v1/chat/completions` requests in OpenAI format
 - Accepts `GET /v1/models` requests for the gateway allowlist
@@ -22,6 +53,25 @@ A private, lightweight OpenAI-compatible gateway for [Ollama](https://ollama.com
 - Optionally exposes the local AI and audio operations as MCP tools at `/mcp`
 - Runs Agent Zero as a separate Docker UI that uses this gateway as an
   OpenAI-compatible provider
+
+## Current boundary and configuration note
+
+The repository already contains redacted learning records, isolated repo-ops
+workspaces, evaluation manifests, and a human-operated candidate promotion
+script. The controller now provides a durable SQLite job registry, schema
+migrations, strict `lab.job/v1` validation, idempotency protection, read-only
+status APIs, pull leases, fenced heartbeats, expiry recovery, and one adapter
+that creates a disposable `code_patch` workspace. It does **not** yet contain an
+artifact registry, candidate records, evaluator, release records, or an
+automatic/promotion API. A completed phase-2 job is not an evaluated or
+promotable result; see [Lab controller v0.1](docs/lab-controller-v0.1.md).
+
+`.env.example` and the installers set `ENABLE_ARBITRARY_MODELS=false` and
+`WARM_AUDIO_ON_START=false`. The raw fallback values in `gateway/config.py` and
+`compose.yaml` are currently `true`, so operators must create and retain a
+`.env` file rather than relying on Compose fallbacks. Treat resolving that
+fallback mismatch as a hardening prerequisite before any shared or multi-user
+deployment.
 
 ---
 
@@ -369,7 +419,11 @@ On Windows you can also just double-click `Install.cmd`, which launches this sam
 
 On Linux, use `python3 scripts/install_gui.py` and install your distribution's Tkinter package if needed. The GUI writes `.env`, stores its own UI state in `.local/install-gui.json`, and then runs the same Docker installer scripts described above.
 
-The model selector writes `OLLAMA_MODELS` using the approved model tags only. The gateway still rejects arbitrary model names unless `ENABLE_ARBITRARY_MODELS=true` is set manually.
+The model selector writes `OLLAMA_MODELS` using the approved model tags only.
+With the installer-created `.env`, the gateway rejects arbitrary model names
+unless `ENABLE_ARBITRARY_MODELS=true` is set manually. See the configuration
+note above: direct raw Compose/config fallbacks currently differ and must not be
+relied upon as a security control.
 
 ---
 
@@ -642,7 +696,8 @@ downloads that model into the gateway cache. The Docker setup requires the
 Qdrant Compose overlay and the RAG dependencies:
 
 ```bash
-# RAG is enabled by default; set RAG_ENABLED=false or INSTALL_RAG=false to opt out.
+# The managed installer includes this overlay. For manual Compose use, add it
+# explicitly; set RAG_ENABLED=false or INSTALL_RAG=false to opt out.
 docker compose -f compose.yaml -f compose.qdrant.yaml up -d --build
 docker compose exec ollama ollama pull nomic-embed-text
 ```
@@ -780,15 +835,25 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama address. Must point to a loopback host. |
 | `HOST` | `127.0.0.1` | Gateway listen address. Keep as localhost; Tailscale Serve forwards to it. |
 | `PORT` | `8080` | Gateway listen port. |
+| `CONTROLLER_HOST` | `127.0.0.1` | Lab-controller listen address. Only loopback hosts are accepted. |
+| `CONTROLLER_PORT` | `8091` | Lab-controller listen port when started manually. |
+| `CONTROLLER_DATABASE_PATH` | `.local/lab-controller/controller.sqlite3` | Local SQLite path for controller migrations, jobs, events, workers, and attempts. |
+| `CONTROLLER_MAX_LIST_LIMIT` | `100` | Maximum jobs returned by one status list request. |
+| `CONTROLLER_LEASE_SECONDS` | `60` | Lease duration for the phase-2 repo-ops adapter (30–300 seconds). |
+| `CONTROLLER_SCHEDULER_INTERVAL_SECONDS` | `5` | Expired-lease reaper interval (1–60 seconds). |
+| `CONTROLLER_WORKER_TOKEN` | *(empty)* | Required before worker endpoints or `compose.lab-controller.yaml` can be used; keep it local and distinct from `API_KEY`. |
+| `CONTROLLER_ALLOWED_CANDIDATE_TARGET_PREFIXES` | `agent-zero/,gateway/,rag/,repo-ops/` | Comma-separated target namespaces allowed for `candidate_build` jobs. |
+| `CONTROLLER_ALLOWED_CANDIDATE_CHANGE_FIELDS` | approved bounded fields | Comma-separated change fields a candidate may request; each job may name at most two. |
+| `REPO_OPS_CONTROLLER_*` | see `.env.example` | Optional adapter ID, image identity, poll interval, and heartbeat interval. The Compose overlay fixes its controller URL to the private `lab-controller` service. |
 | `DEFAULT_MODEL_PROFILE` | `main` | Profile used when the client omits the `model` field. |
 | `DEFAULT_WHISPER_MODEL` | `none` | Whisper profile used when transcription requests omit `model`; allowed values are `none`, `tiny`, `base`, and `small`. |
 | `WHISPER_DEVICE` | `auto` | Device for Whisper model loading (`auto`, `cpu`, `cuda`, or `mps`). |
 | `WHISPER_CACHE_DIR` | `/models/cache/whisper` in Docker | Whisper model cache directory. |
 | `CHATTERBOX_MODEL` | `chatterbox` | Chatterbox model used when speech requests omit `model`; allowed values are `chatterbox` and `chatterbox-multilingual`. |
 | `CHATTERBOX_DEVICE` | `auto` | Device for Chatterbox model loading (`auto`, `cpu`, `cuda`, or `mps`). |
-| `WARM_AUDIO_ON_START` | `false` | If `true`, load the Whisper and Chatterbox models in the background at startup so the first speech request is fast instead of paying a one-time download + load. |
-| `ENABLE_ARBITRARY_MODELS` | `false` | If `true`, any model name is forwarded to Ollama. |
-| `AGENT_ZERO_ENABLED` | `true` | Legacy compatibility flag. Agent Zero is mandatory; installers and status treat `agent` and `agent-utility` as required models. |
+| `WARM_AUDIO_ON_START` | `false` in `.env.example`; `true` raw fallback | If `true`, load the Whisper and Chatterbox models in the background at startup so the first speech request is fast instead of paying a one-time download + load. Use an explicit `.env`; the fallback mismatch is a known hardening issue. |
+| `ENABLE_ARBITRARY_MODELS` | `false` in `.env.example`; `true` raw fallback | If `true`, any model name is forwarded to Ollama. Use an explicit `.env`; do not rely on the current fallback as a model-gating control. |
+| `AGENT_ZERO_ENABLED` | `true` | Enables the Agent Zero overlay for installer workflows. It can be opted out of for a core gateway deployment; when enabled, installers and status treat `agent` and `agent-utility` as required models. |
 | `AGENT_ZERO_PORT` | `50080` | Host loopback port for the Agent Zero UI. |
 | `AGENT_ZERO_TAILSCALE_HTTPS_PORT` | `8443` | Tailscale Serve HTTPS port for Agent Zero. |
 | `ENABLE_API_KEY_AUTH` | `false` | If `true`, requires a `Bearer` token on all non-health requests. |

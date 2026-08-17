@@ -26,6 +26,7 @@ RUN python -m pip install --upgrade pip && \
 
 COPY repo_ops ./repo_ops
 COPY agent_learning ./agent_learning
+COPY lab_controller ./lab_controller
 
 RUN groupadd --system repoops && \
     useradd --system --gid repoops --home-dir /home/repoops --create-home --shell /usr/sbin/nologin repoops && \

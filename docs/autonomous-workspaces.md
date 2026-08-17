@@ -1,5 +1,12 @@
 # Autonomous local workspaces
 
+This document describes the current bounded `repo-ops` worker workflow. It is
+not an autonomous release loop: a run remains isolated, evidence-producing, and
+human-reviewed. The phase-2 controller now leases a separate, constrained
+adapter that prepares an empty disposable `code_patch` workspace and stops; it
+does not call this autonomous repo-ops flow. Evaluation and promotion boundaries
+remain specified in [Lab controller v0.1](lab-controller-v0.1.md).
+
 Enable `REPO_OPS_AUTONOMY_ENABLED=true` only with the `compose.repo-ops.yaml`
 overlay. Agent Zero may use the new repo-ops MCP run, progress, evaluation,
 preview, pause, resume, and report tools, but they retain the existing
